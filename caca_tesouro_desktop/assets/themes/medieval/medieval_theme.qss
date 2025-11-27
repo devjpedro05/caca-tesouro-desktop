@@ -1,0 +1,417 @@
+/* ============================================
+   TEMA MEDIEVAL - Caça ao Tesouro em Redes de Túneis
+   Versão Simplificada (sem imagens de fundo)
+   ============================================ */
+
+/* ============================================
+   PALETA DE CORES
+   ============================================ */
+/* 
+   Ouro: #D4AF37, #FFD700, #C5A028
+   Pergaminho: #F4E8D0, #E8D7B8, #D4C4A8
+   Pedra: #4A4A4A, #2C2C2C, #1A1A1A
+   Madeira: #5D4E37, #3E2F1F, #2B1F14
+   Texto: #2C1810 (marrom escuro), #FFE4B5 (ouro claro)
+*/
+
+/* ============================================
+   JANELA PRINCIPAL E WIDGET CENTRAL
+   ============================================ */
+QMainWindow {
+    background-color: #2C2C2C;
+}
+
+QWidget#centralWidget {
+    background-color: #2C2C2C;
+}
+
+/* ============================================
+   BOARDVIEW - MAPA DO JOGO
+   ============================================ */
+QGraphicsView#BoardView {
+    background-image: url(stone_bg.png);
+    background-repeat: repeat;
+    background-color: #1A1A1A;
+    border: 3px solid #3E2F1F;
+    border-radius: 8px;
+    padding: 5px;
+}
+
+/* ============================================
+   SIDE PANEL - PAINEL LATERAL DE PERGAMINHO
+   ============================================ */
+QWidget#SidePanel {
+    background-image: url(parchment_bg.png);
+    background-repeat: repeat;
+    background-color: #F4E8D0;
+    border: 4px solid #8B7355;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+/* ============================================
+   GROUP BOX - SEÇÕES TEMÁTICAS
+   ============================================ */
+QGroupBox {
+    background-color: rgba(244, 232, 208, 0.9);
+    border: 2px solid #C5A028;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding: 15px 10px 10px 10px;
+    font-family: "Georgia", serif;
+    font-weight: bold;
+    font-size: 14px;
+    color: #2C1810;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top center;
+    padding: 5px 15px;
+    background-color: #D4AF37;
+    color: #2C1810;
+    border: 2px solid #C5A028;
+    border-radius: 5px;
+    font-size: 13px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Painéis específicos */
+QGroupBox#QuestLogPanel {
+    border-color: #8B4513;
+}
+
+QGroupBox#QuestLogPanel::title {
+    background-color: #CD853F;
+    border-color: #8B4513;
+}
+
+QGroupBox#CurrentEventPanel {
+    border-color: #B8860B;
+}
+
+QGroupBox#CurrentEventPanel::title {
+    background-color: #DAA520;
+    border-color: #B8860B;
+}
+
+QGroupBox#PlayerStatsPanel {
+    border-color: #2E8B57;
+}
+
+QGroupBox#PlayerStatsPanel::title {
+    background-color: #3CB371;
+    border-color: #2E8B57;
+}
+
+/* ============================================
+   BOTTOM BAR - BARRA INFERIOR DE MADEIRA
+   ============================================ */
+QWidget#BottomBar {
+    background-image: url(wood_bg.png);
+    background-repeat: repeat;
+    background-color: #3E2F1F;
+    border-top: 4px solid #2B1F14;
+    border-bottom: 2px solid #2B1F14;
+    min-height: 80px;
+    max-height: 100px;
+    padding: 10px 15px;
+}
+
+/* ============================================
+   BOTÕES - ESTILO GERAL
+   ============================================ */
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #5D4E37, stop:0.5 #4A3F2F, stop:1 #3E2F1F);
+    color: #FFE4B5;
+    border: 2px solid #2B1F14;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-family: "Georgia", serif;
+    font-size: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #6D5E47, stop:0.5 #5A4F3F, stop:1 #4E3F2F);
+    border-color: #D4AF37;
+    color: #FFD700;
+}
+
+QPushButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #3E2F1F, stop:0.5 #4A3F2F, stop:1 #5D4E37);
+    padding-top: 10px;
+    padding-bottom: 6px;
+}
+
+QPushButton:disabled {
+    background: #4A4A4A;
+    color: #7F7F7F;
+    border-color: #2C2C2C;
+}
+
+/* ============================================
+   BOTÕES DE AÇÃO CIRCULARES (Bottom Bar)
+   ============================================ */
+QPushButton#btnSearch,
+QPushButton#btnItem,
+QPushButton#btnMove,
+QPushButton#btnAttack,
+QPushButton#btnSkill {
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.8,
+                                fx:0.3, fy:0.3,
+                                stop:0 #6A6A6A, stop:0.7 #4A4A4A, stop:1 #2C2C2C);
+    border: 3px solid #1A1A1A;
+    border-radius: 30px;
+    min-width: 55px;
+    max-width: 55px;
+    min-height: 55px;
+    max-height: 55px;
+    font-size: 11px;
+    font-weight: bold;
+    color: #D4AF37;
+    padding: 0px;
+}
+
+QPushButton#btnSearch:hover,
+QPushButton#btnItem:hover,
+QPushButton#btnMove:hover,
+QPushButton#btnAttack:hover,
+QPushButton#btnSkill:hover {
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.8,
+                                fx:0.3, fy:0.3,
+                                stop:0 #8A8A8A, stop:0.7 #6A6A6A, stop:1 #4A4A4A);
+    border-color: #FFD700;
+    color: #FFD700;
+}
+
+QPushButton#btnSearch:pressed,
+QPushButton#btnItem:pressed,
+QPushButton#btnMove:pressed,
+QPushButton#btnAttack:pressed,
+QPushButton#btnSkill:pressed {
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.8,
+                                fx:0.3, fy:0.3,
+                                stop:0 #3A3A3A, stop:0.7 #2A2A2A, stop:1 #1A1A1A);
+}
+
+/* ============================================
+   BOTÃO END TURN - GRANDE E DOURADO
+   ============================================ */
+QPushButton#btnEndTurn {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #FFD700, stop:0.5 #D4AF37, stop:1 #C5A028);
+    color: #2C1810;
+    border: 3px solid #8B7355;
+    border-radius: 10px;
+    padding: 12px 30px;
+    font-size: 16px;
+    font-weight: bold;
+    min-width: 150px;
+}
+
+QPushButton#btnEndTurn:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #FFE44D, stop:0.5 #FFD700, stop:1 #D4AF37);
+    border-color: #FFD700;
+}
+
+QPushButton#btnEndTurn:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #C5A028, stop:0.5 #D4AF37, stop:1 #FFD700);
+    padding-top: 14px;
+    padding-bottom: 10px;
+}
+
+QPushButton#btnEndTurn:disabled {
+    background: #7F7F7F;
+    color: #4A4A4A;
+    border-color: #5A5A5A;
+}
+
+/* ============================================
+   BOTÃO HELP - PEQUENO COM ÍCONE
+   ============================================ */
+QPushButton#btnHelp {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #4A7BA7, stop:0.5 #3A6B97, stop:1 #2A5B87);
+    color: #FFFFFF;
+    border: 2px solid #1A3B57;
+    border-radius: 20px;
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 0px;
+}
+
+QPushButton#btnHelp:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #5A8BB7, stop:0.5 #4A7BA7, stop:1 #3A6B97);
+    border-color: #5A8BB7;
+}
+
+QPushButton#btnHelp:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #2A5B87, stop:0.5 #3A6B97, stop:1 #4A7BA7);
+}
+
+/* ============================================
+   LABELS - TÍTULOS E TEXTOS
+   ============================================ */
+QLabel {
+    color: #2C1810;
+    font-family: "Georgia", serif;
+    font-size: 12px;
+    background: transparent;
+    padding: 2px;
+}
+
+/* Títulos de seções */
+QLabel#QuestLogTitle,
+QLabel#CurrentEventTitle,
+QLabel#PlayerStatsTitle {
+    font-size: 14px;
+    font-weight: bold;
+    color: #8B4513;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 5px;
+}
+
+/* Texto de conteúdo */
+QLabel#QuestLogText,
+QLabel#CurrentEventText {
+    font-size: 11px;
+    color: #3E2F1F;
+    padding: 5px;
+}
+
+/* Stats do jogador */
+QLabel#PlayerName {
+    font-size: 13px;
+    font-weight: bold;
+    padding: 3px;
+}
+
+QLabel#PlayerStat {
+    font-size: 11px;
+    color: #4A3F2F;
+    padding: 2px 5px;
+}
+
+/* ============================================
+   TEXT EDIT - ÁREA DE LOG
+   ============================================ */
+QTextEdit {
+    background-color: rgba(255, 250, 240, 0.95);
+    color: #2C1810;
+    border: 2px solid #8B7355;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: "Courier New", monospace;
+    font-size: 10px;
+    selection-background-color: #D4AF37;
+    selection-color: #2C1810;
+}
+
+QTextEdit:focus {
+    border-color: #C5A028;
+}
+
+/* ============================================
+   SCROLLBARS - ESTILO MEDIEVAL
+   ============================================ */
+QScrollBar:vertical {
+    background: #E8D7B8;
+    width: 14px;
+    border: 1px solid #8B7355;
+    border-radius: 7px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #5D4E37, stop:0.5 #4A3F2F, stop:1 #3E2F1F);
+    border: 1px solid #2B1F14;
+    border-radius: 6px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #6D5E47, stop:0.5 #5A4F3F, stop:1 #4E3F2F);
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+QScrollBar:horizontal {
+    background: #E8D7B8;
+    height: 14px;
+    border: 1px solid #8B7355;
+    border-radius: 7px;
+    margin: 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #5D4E37, stop:0.5 #4A3F2F, stop:1 #3E2F1F);
+    border: 1px solid #2B1F14;
+    border-radius: 6px;
+    min-width: 30px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #6D5E47, stop:0.5 #5A4F3F, stop:1 #4E3F2F);
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+/* ============================================
+   QFRAME - LINHAS DIVISÓRIAS
+   ============================================ */
+QFrame[frameShape="4"],
+QFrame[frameShape="5"] {
+    color: #8B7355;
+    background-color: #8B7355;
+    max-height: 2px;
+}
+
+/* ============================================
+   TOOLTIPS - DICAS DE FERRAMENTAS
+   ============================================ */
+QToolTip {
+    background-color: #2C1810;
+    color: #FFE4B5;
+    border: 2px solid #D4AF37;
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-family: "Georgia", serif;
+    font-size: 11px;
+}

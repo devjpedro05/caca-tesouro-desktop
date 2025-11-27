@@ -1,0 +1,104 @@
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout
+from PySide6.QtCore import Qt
+from .grid_board_view import GridBoardView  # Changed from BoardView
+from .side_panel import SidePanel
+from .bottom_bar import BottomBar
+import os
+
+class MainWindow(QMainWindow):
+    """
+    Janela principal do jogo com tema medieval.
+    Layout vertical: Topo (BoardView + SidePanel) + BottomBar
+    """
+    
+    def __init__(self, game_state):
+        super().__init__()
+        self.setWindowTitle("⚔️ Caça ao Tesouro em Redes de Túneis")
+        self.setMinimumSize(1400, 900)
+        self.resize(1600, 1000)
+        
+        self.game_state = game_state
+        
+        # Define objectName para estilização QSS
+        self.setObjectName("MainWindow")
+        
+        # ===== CARREGAR TEMA QSS =====
+        self._load_stylesheet()
+        
+        # ===== WIDGET CENTRAL =====
+        central_widget = QWidget()
+        central_widget.setObjectName("centralWidget")
+        self.setCentralWidget(central_widget)
+        
+        # ===== LAYOUT PRINCIPAL (Vertical) =====
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # ===== SEÇÃO SUPERIOR (Horizontal: BoardView + SidePanel) =====
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(10, 10, 10, 5)
+        top_layout.setSpacing(10)
+        
+        # GridBoardView (70% da largura) - Changed from BoardView
+        self.board_view = GridBoardView(game_state)
+        self.board_view.main_window = self
+        top_layout.addWidget(self.board_view, stretch=7)
+        
+        # SidePanel (30% da largura)
+        self.side_panel = SidePanel(game_state, self)
+        top_layout.addWidget(self.side_panel, stretch=3)
+        
+        main_layout.addLayout(top_layout, stretch=1)
+        
+        # ===== SEÇÃO INFERIOR (BottomBar) =====
+        self.bottom_bar = BottomBar(game_state, self)
+        main_layout.addWidget(self.bottom_bar)
+        
+        # ===== REFRESH INICIAL =====
+        self.refresh_all()
+    
+    def _load_stylesheet(self):
+        """Carregar e aplicar o tema QSS medieval"""
+        try:
+            # Caminho para o arquivo QSS
+            qss_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                "assets", "themes", "medieval", "medieval_theme.qss"
+            )
+            
+            if os.path.exists(qss_path):
+                with open(qss_path, 'r', encoding='utf-8') as f:
+                    stylesheet = f.read()
+                    
+                # Ajustar caminhos relativos das imagens no QSS
+                # Converter para caminho absoluto e formato de URL
+                base_dir = os.path.dirname(os.path.dirname(__file__))
+                assets_path = os.path.join(base_dir, "assets", "themes", "medieval")
+                
+                # Converter para formato de URL (file:///)
+                # No Windows, precisamos converter \ para / e adicionar file:///
+                assets_url = assets_path.replace('\\', '/')
+                
+                # Substituir os caminhos relativos pelos absolutos
+                stylesheet = stylesheet.replace(
+                    'url(assets/themes/medieval/',
+                    f'url({assets_url}/'
+                )
+                
+                self.setStyleSheet(stylesheet)
+                print(f"✅ Tema medieval carregado com sucesso de: {qss_path}")
+            else:
+                print(f"⚠️ Arquivo QSS não encontrado: {qss_path}")
+                print("   Usando estilo padrão do sistema.")
+        except Exception as e:
+            print(f"❌ Erro ao carregar tema QSS: {e}")
+            import traceback
+            traceback.print_exc()
+            print("   Usando estilo padrão do sistema.")
+
+    def refresh_all(self):
+        """Atualizar todos os componentes da interface"""
+        self.board_view.refresh()
+        self.side_panel.refresh()
+        self.bottom_bar.refresh()
