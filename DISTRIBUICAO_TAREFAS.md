@@ -321,46 +321,90 @@ def end_game(self, victory):
 
 ---
 
-## 🔄 Ordem de Implementação Recomendada
+## 🔄 Ordem de Implementação Recomendada (11 DIAS)
 
-### Sprint 1 (Semana 1)
-**Diógenes:**
-1. Sistema de Combate
-2. Sistema de Cartas Funcional
+### 📅 Sprint 1 - Dias 1-4 (Fundação Crítica)
+**Diógenes (4 dias):**
+- Dia 1-2: Sistema de Combate Completo ⚡
+- Dia 3-4: Sistema de Cartas Funcional ⚡
 
-**Luiz:**
-1. Barras de Status
-2. Diálogo de Inventário
+**Luiz (4 dias):**
+- Dia 1-2: Barras de Status Visuais
+- Dia 3-4: Diálogo de Inventário Visual
 
-**Higor:**
-1. Constantes e Enums
-2. Sistema de Configurações
+**Higor (4 dias):**
+- Dia 1-2: Constantes e Enums + Config
+- Dia 3-4: Sistema de Sons + Utilitários
 
-### Sprint 2 (Semana 2)
-**Diógenes:**
-3. Sistema de Loot
-4. Sistema de Uso de Itens
+**Entrega Sprint 1:** Combate jogável, UI básica, estrutura de suporte
 
-**Luiz:**
-3. Diálogo de Seleção de Cartas
-4. Melhorias Visuais do Fog
+---
 
-**Higor:**
-3. Sistema de Sons
-4. Utilitários Gerais
+### 📅 Sprint 2 - Dias 5-8 (Funcionalidades Core)
+**Diógenes (4 dias):**
+- Dia 5-6: Sistema de Loot Completo
+- Dia 7-8: Sistema de Uso de Itens + Armadilhas
 
-### Sprint 3 (Semana 3)
-**Diógenes:**
-5. Armadilhas Funcionais
-6. Condições de Vitória/Derrota
+**Luiz (4 dias):**
+- Dia 5-6: Diálogo de Seleção de Cartas
+- Dia 7-8: Melhorias Visuais do Fog + Efeitos
 
-**Luiz:**
-5. Animações e Efeitos
-6. Ícones e Assets
+**Higor (4 dias):**
+- Dia 5-6: Testes Unitários Básicos
+- Dia 7-8: Documentação Essencial
 
-**Higor:**
-5. Testes Unitários
-6. Documentação
+**Entrega Sprint 2:** Loot, inventário funcional, UI polida
+
+---
+
+### 📅 Sprint 3 - Dias 9-11 (Finalização e Polish)
+**Diógenes (3 dias):**
+- Dia 9-10: Condições de Vitória/Derrota
+- Dia 11: Integração final + Bug fixes
+
+**Luiz (3 dias):**
+- Dia 9-10: Animações e Efeitos Visuais
+- Dia 11: Ícones e Assets finais
+
+**Higor (3 dias):**
+- Dia 9-10: Testes de integração
+- Dia 11: Documentação final + README
+
+**Entrega Sprint 3:** Jogo completo e jogável! 🎮
+
+---
+
+### ⏰ Cronograma Detalhado
+
+| Dia | Diógenes | Luiz | Higor |
+|-----|----------|------|-------|
+| 1 | Combat System (início) | Status Bars | Constants + Enums |
+| 2 | Combat System (fim) | Status Bars | GameConfig |
+| 3 | Card Effects (início) | Inventory Dialog | SoundManager |
+| 4 | Card Effects (fim) | Inventory Dialog | Utils |
+| 5 | Loot System (início) | Card Selection Dialog | Testes básicos |
+| 6 | Loot System (fim) | Card Selection Dialog | Testes básicos |
+| 7 | Item System + Traps | Fog Improvements | Docs (GAMEPLAY) |
+| 8 | Item System + Traps | Visual Effects | Docs (API) |
+| 9 | Victory/Defeat | Animations | Testes integração |
+| 10 | Victory/Defeat | Icons/Assets | Testes integração |
+| 11 | **INTEGRAÇÃO FINAL** | **POLISH FINAL** | **DOCS FINAL** |
+
+---
+
+### 🎯 Metas Diárias
+
+**Todos os dias:**
+- Commit no final do dia
+- Push para branch pessoal
+- Atualizar checklist
+- Comunicar bloqueios
+
+**Reuniões rápidas:**
+- Dia 1 (manhã): Kickoff
+- Dia 4 (tarde): Review Sprint 1
+- Dia 8 (tarde): Review Sprint 2
+- Dia 11 (tarde): Entrega final
 
 ---
 
@@ -429,6 +473,30 @@ git checkout -b feature/diogenes-combat
 - UI polida ⏳ (Luiz)
 - Sons e configurações ⏳ (Higor)
 
-**Prazo Sugerido:** 3 semanas
+**Prazo:** 11 dias (Sprint intenso!)
 
-Boa sorte, equipe! 🚀
+---
+
+## 🚨 Regras para Cumprir o Prazo
+
+### Priorização Agressiva
+- **Foco total** nas tarefas atribuídas
+- **Sem gold plating** - funcional > perfeito
+- **MVP primeiro** - polish depois
+
+### Comunicação Diária
+- Daily standup 15min (9h)
+- Bloqueios reportados imediatamente
+- Ajuda mútua quando necessário
+
+### Qualidade Mínima
+- Código funcional > código perfeito
+- Testes básicos obrigatórios
+- Documentação inline essencial
+
+### Integração Contínua
+- Commits pequenos e frequentes
+- Pull requests revisados em <2h
+- Merge diário na branch dev
+
+Boa sorte, equipe! Vamos conseguir! 🚀💪
