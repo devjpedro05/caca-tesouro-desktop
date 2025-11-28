@@ -410,28 +410,284 @@ def end_game(self, victory):
 
 ## 📝 Regras para Evitar Conflitos
 
-### 1. Convenção de Branches
+### 1. Estratégia de Branches (RECOMENDADO ✅)
+
+**Cada pessoa trabalha em sua própria branch:**
+
 ```bash
-# Cada pessoa trabalha em sua branch
+# Luiz cria sua branch
 git checkout -b feature/luiz-ui-improvements
+
+# Higor cria sua branch
 git checkout -b feature/higor-utils
+
+# Diógenes cria sua branch
 git checkout -b feature/diogenes-combat
 ```
 
-### 2. Arquivos por Pessoa
-- **Luiz:** Apenas `ui/` e `assets/`
-- **Higor:** Apenas arquivos novos em `core/` (utils, config, etc)
-- **Diógenes:** `core/` (sistemas principais)
+**Vantagens:**
+- ✅ Zero conflitos durante desenvolvimento
+- ✅ Trabalho paralelo sem interferência
+- ✅ Fácil reverter mudanças
+- ✅ Code review antes de merge
+- ✅ Histórico limpo
 
-### 3. Comunicação
-- Avisar no grupo antes de modificar arquivo compartilhado
-- Pull requests para revisar antes de merge
-- Daily standup (5 min) para alinhar
+---
 
-### 4. Integração
-- Diógenes e Luiz: Coordenar interfaces (combate, cartas, inventário)
-- Testar integração antes de merge
-- Usar signals/slots do Qt para desacoplar
+### 2. Workflow Diário
+
+**Início do dia:**
+```bash
+# Atualizar sua branch com main
+git checkout main
+git pull origin main
+git checkout feature/seu-nome-tarefa
+git merge main  # Traz atualizações do main
+```
+
+**Durante o dia:**
+```bash
+# Commits pequenos e frequentes
+git add .
+git commit -m "feat: Adiciona barra de HP visual"
+git push origin feature/seu-nome-tarefa
+```
+
+**Fim do dia:**
+```bash
+# Push final
+git add .
+git commit -m "feat: Completa implementação de StatusBar"
+git push origin feature/seu-nome-tarefa
+
+# Criar Pull Request no GitHub
+# Aguardar review antes de merge
+```
+
+---
+
+### 3. Processo de Merge
+
+**Quando terminar uma tarefa:**
+
+1. **Criar Pull Request (PR) no GitHub:**
+   - Ir para: `https://github.com/devjpedro05/caca-tesouro-desktop`
+   - Click em "Pull Requests" → "New Pull Request"
+   - Base: `main` ← Compare: `feature/sua-branch`
+   - Título: "feat: Implementa Sistema de Combate"
+   - Descrição: Listar o que foi feito
+   - Assignees: Marcar revisor
+
+2. **Code Review:**
+   - Outro membro da equipe revisa
+   - Comenta se necessário
+   - Aprova quando OK
+
+3. **Merge:**
+   ```bash
+   # Opção 1: Merge via GitHub (RECOMENDADO)
+   # Click em "Merge Pull Request" no GitHub
+   
+   # Opção 2: Merge manual
+   git checkout main
+   git pull origin main
+   git merge feature/sua-branch
+   git push origin main
+   ```
+
+4. **Limpar branch:**
+   ```bash
+   # Deletar branch local
+   git branch -d feature/sua-branch
+   
+   # Deletar branch remota
+   git push origin --delete feature/sua-branch
+   ```
+
+---
+
+### 4. Resolução de Conflitos
+
+**Se houver conflito ao mergear:**
+
+```bash
+# 1. Atualizar main
+git checkout main
+git pull origin main
+
+# 2. Voltar para sua branch
+git checkout feature/sua-branch
+
+# 3. Mergear main na sua branch
+git merge main
+
+# 4. Se houver conflito, Git vai avisar
+# Abrir arquivos com conflito e resolver manualmente
+
+# 5. Após resolver
+git add .
+git commit -m "fix: Resolve conflitos com main"
+git push origin feature/sua-branch
+```
+
+**Exemplo de conflito:**
+```python
+<<<<<<< HEAD
+# Seu código
+def calculate_damage(attack):
+    return attack * 2
+=======
+# Código do main
+def calculate_damage(attack, defense):
+    return attack - defense
+>>>>>>> main
+```
+
+**Resolver para:**
+```python
+# Versão final (escolher a melhor ou combinar)
+def calculate_damage(attack, defense=0):
+    return (attack * 2) - defense
+```
+
+---
+
+### 5. Convenção de Commits
+
+**Formato:**
+```
+tipo: Descrição curta (máx 50 chars)
+
+Descrição detalhada opcional (se necessário)
+```
+
+**Tipos:**
+- `feat:` Nova funcionalidade
+- `fix:` Correção de bug
+- `docs:` Documentação
+- `style:` Formatação (sem mudança de lógica)
+- `refactor:` Refatoração
+- `test:` Testes
+- `chore:` Manutenção
+
+**Exemplos:**
+```bash
+git commit -m "feat: Adiciona sistema de combate por turnos"
+git commit -m "fix: Corrige cálculo de dano em monstros"
+git commit -m "docs: Atualiza README com instruções de jogo"
+git commit -m "refactor: Extrai lógica de loot para LootSystem"
+```
+
+---
+
+### 6. Arquivos por Pessoa (Evitar Conflitos)
+
+**Luiz (UI):**
+- ✅ `ui/status_bars.py` (novo)
+- ✅ `ui/inventory_dialog.py` (novo)
+- ✅ `ui/card_selection_dialog.py` (novo)
+- ✅ `ui/effects.py` (novo)
+- ✅ `assets/icons/*` (novos)
+- ⚠️ `ui/grid_board_view.py` (apenas método `_draw_fog()`)
+
+**Higor (Utils):**
+- ✅ `core/config.py` (novo)
+- ✅ `core/sound_manager.py` (novo)
+- ✅ `core/constants.py` (novo)
+- ✅ `core/utils.py` (novo)
+- ✅ `tests/*` (novos)
+- ✅ `docs/*` (novos)
+
+**Diógenes (Core):**
+- ✅ `core/combat_system.py` (novo)
+- ✅ `core/card_effects.py` (novo)
+- ✅ `core/loot_system.py` (novo)
+- ✅ `core/item_system.py` (novo)
+- ✅ `core/trap_system.py` (novo)
+- ✅ `ui/combat_dialog.py` (novo)
+- ⚠️ `core/game_state.py` (modificar com cuidado)
+
+**⚠️ Arquivos Compartilhados (Comunicar antes!):**
+- `core/game_state.py`
+- `ui/grid_board_view.py`
+- `ui/main_window.py`
+
+---
+
+### 7. Comunicação de Mudanças
+
+**Antes de modificar arquivo compartilhado:**
+```
+1. Avisar no grupo: "Vou modificar game_state.py"
+2. Aguardar confirmação
+3. Fazer mudança
+4. Commit e push rápido
+5. Avisar: "game_state.py atualizado"
+```
+
+**Integração entre pessoas:**
+```
+Diógenes termina CombatSystem
+  ↓
+Avisa Luiz: "CombatSystem pronto, pode integrar"
+  ↓
+Luiz cria CombatDialog usando CombatSystem
+  ↓
+Testa integração
+  ↓
+Merge
+```
+
+---
+
+### 8. Checklist Diário
+
+**Todo dia, cada pessoa deve:**
+- [ ] Pull do main pela manhã
+- [ ] Trabalhar na sua branch
+- [ ] Commits pequenos e frequentes
+- [ ] Push no final do dia
+- [ ] Atualizar checklist de tarefas
+- [ ] Comunicar bloqueios
+- [ ] Revisar PRs de outros (se solicitado)
+
+---
+
+### 9. Exemplo Completo de Workflow
+
+**Dia 1 - Luiz implementa StatusBar:**
+
+```bash
+# Manhã
+git checkout main
+git pull origin main
+git checkout -b feature/luiz-status-bars
+
+# Desenvolvimento
+# ... cria ui/status_bars.py ...
+git add ui/status_bars.py
+git commit -m "feat: Cria componente StatusBar para HP/Stamina"
+
+# ... implementa lógica ...
+git add ui/status_bars.py
+git commit -m "feat: Adiciona animações de mudança de HP"
+
+# ... integra com side_panel ...
+git add ui/side_panel.py
+git commit -m "feat: Integra StatusBar no painel lateral"
+
+# Fim do dia
+git push origin feature/luiz-status-bars
+
+# GitHub
+# Cria Pull Request
+# Aguarda review de Diógenes ou Higor
+# Após aprovação, merge
+```
+
+**Resultado:** Trabalho isolado, sem conflitos! ✅
+
+---
 
 ---
 
