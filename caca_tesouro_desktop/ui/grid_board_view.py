@@ -16,9 +16,13 @@ class GridBoardView(QGraphicsView):
         # Define objectName para estilização QSS
         self.setObjectName("BoardView")
         
-        # Create grid map (25x25 for chamber-based layout)
-        self.grid_map = GridMap()  # Uses default 25x25
+        # Create grid map (20x20 with chambers and tunnels)
+        self.grid_map = GridMap()  # Uses default 20x20
         self.grid_map.create_from_graph(self.game_state.graph)
+        
+        # Create fog of war system
+        from core.fog_of_war import FogOfWar
+        self.fog_of_war = FogOfWar(self.grid_map.width, self.grid_map.height)
         
         # Initialize player positions in grid
         for player in self.game_state.players:
@@ -55,6 +59,7 @@ class GridBoardView(QGraphicsView):
         self._draw_obstacles()  # Draw obstacles after grid
         self._draw_players()
         self._draw_treasure()
+        self._draw_fog()  # Draw fog of war overlay
         
         # Set scene rect
         scene_width = self.grid_map.width * self.grid_map.tile_size
@@ -101,13 +106,16 @@ class GridBoardView(QGraphicsView):
                     else:
                         tile.setBrush(QBrush(QColor("#3C3C3C")))
                     tile.setPen(QPen(QColor("#2C2C2C"), 1))
-                    
-                elif tile_type == TileType.PATH:
-                    if not textures['path'].isNull():
-                        tile.setBrush(QBrush(textures['path']))
-                    else:
-                        tile.setBrush(QBrush(QColor("#8B7355")))
-                    tile.setPen(QPen(QColor("#6B5335"), 1))
+                
+                elif tile_type == TileType.CHAMBER:
+                    # Chambers are larger rooms (2x2)
+                    tile.setBrush(QBrush(QColor("#6B5335")))
+                    tile.setPen(QPen(QColor("#5B4325"), 1))
+                
+                elif tile_type == TileType.TUNNEL:
+                    # Tunnels are narrow corridors (1x1)
+                    tile.setBrush(QBrush(QColor("#4A4A4A")))
+                    tile.setPen(QPen(QColor("#3A3A3A"), 2))
                     
                 elif tile_type == TileType.START:
                     if not textures['floor'].isNull():
@@ -244,6 +252,38 @@ class GridBoardView(QGraphicsView):
             treasure.setPen(QPen(QColor("#FFA500"), 2))
             treasure.setZValue(3)
             self.scene.addItem(treasure)
+    
+    def _draw_fog(self):
+        """Draw fog of war overlay"""
+        tile_size = self.grid_map.tile_size
+        
+        # Update fog visibility based on current player positions
+        player_positions = []
+        for player in self.game_state.players:
+            pos = self.grid_map.get_player_position(player.id)
+            if pos:
+                player_positions.append(pos)
+        
+        # Update visibility with dynamic radius based on location
+        self.fog_of_war.update_visibility(
+            player_positions,
+            lambda x, y: self.grid_map.is_tunnel(x, y)
+        )
+        
+        # Draw fog overlay for each tile
+        for y in range(self.grid_map.height):
+            for x in range(self.grid_map.width):
+                opacity = self.fog_of_war.get_fog_opacity(x, y)
+                
+                if opacity > 0:  # Only draw if there's fog
+                    px = x * tile_size
+                    py = y * tile_size
+                    
+                    fog_tile = QGraphicsRectItem(px, py, tile_size, tile_size)
+                    fog_tile.setBrush(QBrush(QColor(0, 0, 0, opacity)))
+                    fog_tile.setPen(QPen(Qt.NoPen))
+                    fog_tile.setZValue(10)  # Above everything
+                    self.scene.addItem(fog_tile)
     
     def keyPressEvent(self, event: QKeyEvent):
         """Handle keyboard input for movement - separate controls per player"""

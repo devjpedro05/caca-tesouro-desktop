@@ -1,6 +1,6 @@
 """
 Grid-based map system for tile-based movement
-Converts graph structure to 2D grid representation
+Converts graph structure to 2D grid with chambers and tunnels
 """
 from enum import Enum
 from typing import Dict, Tuple, List, Optional
@@ -8,24 +8,23 @@ from typing import Dict, Tuple, List, Optional
 class TileType(Enum):
     """Types of tiles in the grid"""
     EMPTY = 0
-    PATH = 1
-    WALL = 2
-    TREASURE = 3
-    MONSTER = 4
-    RESOURCE = 5
-    START = 6
+    WALL = 1
+    CHAMBER = 2  # Câmara (2x2) - vértice do grafo
+    TUNNEL = 3   # Túnel (1x1) - aresta do grafo
+    TREASURE = 4
+    START = 5
 
 class GridMap:
-    """Grid-based map representation"""
+    """Grid-based map representation with chambers and tunnels"""
     
-    def __init__(self, width: int = 25, height: int = 25):
+    def __init__(self, width: int = 20, height: int = 20):
         self.width = width
         self.height = height
         self.tile_size = 50  # pixels per tile
         
-        # Initialize grid with empty tiles
+        # Initialize grid with walls
         self.tiles: List[List[TileType]] = [
-            [TileType.EMPTY for _ in range(width)] 
+            [TileType.WALL for _ in range(width)] 
             for _ in range(height)
         ]
         
@@ -36,8 +35,11 @@ class GridMap:
         self.grid_to_vertex: Dict[Tuple[int, int], int] = {}
         self.vertex_to_grid: Dict[int, Tuple[int, int]] = {}
         
-        # Chambers
-        self.chambers: List[Dict] = []
+        # Chambers (2x2 each) - vertices of the graph
+        self.chambers: Dict[int, Dict] = {}  # {vertex_id: {bounds, center, name}}
+        
+        # Tunnels (1x1 paths) - edges of the graph
+        self.tunnels: List[List[Tuple[int, int]]] = []  # List of paths
         
         # Obstacle manager
         from .obstacle_manager import ObstacleManager
@@ -46,109 +48,104 @@ class GridMap:
     def create_from_graph(self, graph):
         """Convert graph structure to chamber-based grid layout"""
         
-        # Define 6 chambers with their boundaries
-        self.chambers = [
-            # Chamber 0: Red Player Start (top-left)
-            {'name': 'Start Vermelho', 'bounds': (2, 2, 8, 8), 'center': (5, 5)},
-            # Chamber 1: Blue Player Start (bottom-left)
-            {'name': 'Start Azul', 'bounds': (2, 16, 8, 22), 'center': (5, 19)},
-            # Chamber 2: Central Chamber (middle)
-            {'name': 'Câmara Central', 'bounds': (10, 10, 16, 16), 'center': (13, 13)},
-            # Chamber 3: Treasure Chamber (right)
-            {'name': 'Câmara do Tesouro', 'bounds': (18, 10, 23, 16), 'center': (20, 13)},
-            # Chamber 4: Trap Chamber (top-right)
-            {'name': 'Câmara de Armadilhas', 'bounds': (18, 2, 23, 8), 'center': (20, 5)},
-            # Chamber 5: Resource Chamber (bottom-right)
-            {'name': 'Câmara de Recursos', 'bounds': (18, 16, 23, 22), 'center': (20, 19)},
-        ]
+        # Define chamber positions for 7 vertices (2x2 each)
+        # Layout designed to fit in 20x20 grid
+        chamber_positions = {
+            0: (9, 2),   # Start (top center)
+            1: (3, 6),   # Left upper
+            2: (2, 11),  # Left lower
+            3: (9, 15),  # Bottom center
+            4: (15, 6),  # Right upper
+            5: (9, 9),   # Center
+            6: (9, 18),  # Treasure (bottom)
+        }
         
-        # Fill chambers with PATH tiles
-        for chamber in self.chambers:
-            x1, y1, x2, y2 = chamber['bounds']
+        # Create 2x2 chambers for each vertex
+        for vertex_id, (cx, cy) in chamber_positions.items():
+            # Chamber is 2x2 centered at (cx, cy)
+            x1, y1 = cx, cy
+            x2, y2 = cx + 1, cy + 1
+            
+            self.chambers[vertex_id] = {
+                'bounds': (x1, y1, x2, y2),
+                'center': (cx, cy),
+                'name': graph.vertices[vertex_id].name if vertex_id < len(graph.vertices) else f'Câmara {vertex_id}'
+            }
+            
+            # Fill chamber with CHAMBER tiles
             for y in range(y1, y2 + 1):
                 for x in range(x1, x2 + 1):
                     if 0 <= x < self.width and 0 <= y < self.height:
-                        self.tiles[y][x] = TileType.PATH
-        
-        # Create corridors connecting chambers
-        corridors = [
-            # Red Start -> Central
-            [(8, 5), (9, 5), (10, 5), (10, 6), (10, 7), (10, 8), (10, 9), (10, 10)],
-            # Blue Start -> Central
-            [(8, 19), (9, 19), (10, 19), (10, 18), (10, 17), (10, 16)],
-            # Central -> Treasure
-            [(16, 13), (17, 13), (18, 13)],
-            # Central -> Trap Chamber
-            [(13, 10), (13, 9), (13, 8), (14, 8), (15, 8), (16, 8), (17, 8), (18, 8), (18, 7), (18, 6), (18, 5)],
-            # Central -> Resource Chamber
-            [(13, 16), (13, 17), (13, 18), (13, 19), (14, 19), (15, 19), (16, 19), (17, 19), (18, 19)],
-        ]
-        
-        for corridor in corridors:
-            for x, y in corridor:
-                if 0 <= x < self.width and 0 <= y < self.height:
-                    self.tiles[y][x] = TileType.PATH
-        
-        # Map vertices to chamber centers
-        vertex_positions = {
-            0: (5, 5),    # Red Start
-            1: (5, 19),   # Blue Start
-            2: (13, 13),  # Central Chamber
-            3: (20, 5),   # Trap Chamber
-            4: (20, 19),  # Resource Chamber
-            5: (20, 13),  # Treasure Chamber (moved from 6)
-            6: (20, 13),  # Keep for compatibility
-        }
-        
-        for vertex_id, (x, y) in vertex_positions.items():
-            self.vertex_to_grid[vertex_id] = (x, y)
-            self.grid_to_vertex[(x, y)] = vertex_id
+                        self.tiles[y][x] = TileType.CHAMBER
             
-            # Mark special tiles (with bounds checking)
-            if 0 <= x < self.width and 0 <= y < self.height:
-                if vertex_id == 6 or vertex_id == 5:  # Treasure
-                    self.tiles[y][x] = TileType.TREASURE
-                elif vertex_id == 0 or vertex_id == 1:  # Starts
-                    self.tiles[y][x] = TileType.START
+            # Map vertex to grid position (center of chamber)
+            self.vertex_to_grid[vertex_id] = (cx, cy)
+            self.grid_to_vertex[(cx, cy)] = vertex_id
+            
+            # Mark special tiles
+            if vertex_id == 6:  # Treasure
+                self.tiles[cy][cx] = TileType.TREASURE
+            elif vertex_id == 0:  # Start
+                self.tiles[cy][cx] = TileType.START
         
-        # Fill remaining empty spaces with walls
-        for y in range(self.height):
-            for x in range(self.width):
-                if self.tiles[y][x] == TileType.EMPTY:
-                    self.tiles[y][x] = TileType.WALL
+        # Create tunnels (1x1) for each edge in the graph
+        for vertex_id in graph.vertices.keys():
+            neighbors_list = graph.neighbors(vertex_id)
+            for neighbor_id, edge in neighbors_list:
+                if vertex_id < neighbor_id:  # Avoid duplicates
+                    # Create tunnel between chambers
+                    start_pos = chamber_positions[vertex_id]
+                    end_pos = chamber_positions[neighbor_id]
+                    tunnel_path = self._create_tunnel(start_pos, end_pos)
+                    self.tunnels.append(tunnel_path)
+                    
+                    # Mark tunnel tiles
+                    for x, y in tunnel_path:
+                        if 0 <= x < self.width and 0 <= y < self.height:
+                            if self.tiles[y][x] == TileType.WALL:  # Don't overwrite chambers
+                                self.tiles[y][x] = TileType.TUNNEL
         
         print(f"✅ Grid map created: {self.width}x{self.height}")
-        print(f"📍 Created {len(self.chambers)} chambers")
-        print(f"📍 Mapped {len(vertex_positions)} vertices to grid")
+        print(f"📍 Created {len(self.chambers)} chambers (2x2 each)")
+        print(f"🔗 Created {len(self.tunnels)} tunnels")
         
         # Populate chambers with obstacles
         self._populate_obstacles()
     
+    def _create_tunnel(self, start: Tuple[int, int], end: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Create 1x1 tunnel path between two chambers using Manhattan pathfinding"""
+        x1, y1 = start
+        x2, y2 = end
+        path = []
+        
+        # Move horizontally first
+        current_x, current_y = x1, y1
+        while current_x != x2:
+            current_x += 1 if x2 > current_x else -1
+            path.append((current_x, current_y))
+        
+        # Then move vertically
+        while current_y != y2:
+            current_y += 1 if y2 > current_y else -1
+            path.append((current_x, current_y))
+        
+        return path
+    
     def _populate_obstacles(self):
         """Populate chambers with obstacles"""
-        # Central Chamber - Monsters
-        self.obstacle_manager.populate_chamber(
-            self.chambers[2]['bounds'],  # Central chamber
-            "central"
-        )
+        # Central Chamber (vertex 5) - Monsters
+        if 5 in self.chambers:
+            self.obstacle_manager.populate_chamber(
+                self.chambers[5]['bounds'],
+                "central"
+            )
         
-        # Treasure Chamber - Locked door + chest
-        self.obstacle_manager.populate_chamber(
-            self.chambers[3]['bounds'],  # Treasure chamber
-            "treasure"
-        )
-        
-        # Trap Chamber - Traps
-        self.obstacle_manager.populate_chamber(
-            self.chambers[4]['bounds'],  # Trap chamber
-            "trap"
-        )
-        
-        # Resource Chamber - Loot chest
-        self.obstacle_manager.populate_chamber(
-            self.chambers[5]['bounds'],  # Resource chamber
-            "resource"
-        )
+        # Treasure Chamber (vertex 6) - Locked door + chest
+        if 6 in self.chambers:
+            self.obstacle_manager.populate_chamber(
+                self.chambers[6]['bounds'],
+                "treasure"
+            )
         
         print(f"🎯 Populated {len(self.obstacle_manager.get_all_obstacles())} obstacles")
     
@@ -160,7 +157,13 @@ class GridMap:
         
         # Check tile type
         tile = self.tiles[y][x]
-        return tile in [TileType.PATH, TileType.TREASURE, TileType.START, TileType.RESOURCE]
+        return tile in [TileType.CHAMBER, TileType.TUNNEL, TileType.TREASURE, TileType.START]
+    
+    def is_tunnel(self, x: int, y: int) -> bool:
+        """Check if position is a tunnel"""
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return False
+        return self.tiles[y][x] == TileType.TUNNEL
     
     def get_tile(self, x: int, y: int) -> TileType:
         """Get tile type at position"""
