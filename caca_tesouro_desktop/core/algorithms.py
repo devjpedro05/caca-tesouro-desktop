@@ -322,3 +322,153 @@ def calculate_path_cost(graph: Graph, path: List[int]) -> int:
             return float('inf')  # Invalid path
     
     return total_cost
+
+# ============================================
+# COMBAT-SPECIFIC ALGORITHMS
+# ============================================
+
+def bfs_combat_distance(graph: Graph, start_id: int, end_id: int) -> int:
+    """
+    Calculate shortest distance (in edges) between two positions in combat graph
+    Optimized for small combat graphs (5-7 nodes)
+    
+    Args:
+        graph: Combat graph
+        start_id: Starting position ID
+        end_id: Target position ID
+    
+    Returns:
+        Distance in edges, or float('inf') if unreachable
+    """
+    if start_id == end_id:
+        return 0
+    
+    if start_id not in graph.vertices or end_id not in graph.vertices:
+        return float('inf')
+    
+    distances = bfs(graph, start_id)
+    return distances.get(end_id, float('inf'))
+
+def dijkstra_combat_path(graph: Graph, start_id: int, end_id: int) -> Tuple[List[int], int]:
+    """
+    Find shortest path in combat graph considering edge weights (movement cost)
+    
+    Args:
+        graph: Combat graph
+        start_id: Starting position ID
+        end_id: Target position ID
+    
+    Returns:
+        Tuple of (path as list of vertex IDs, total cost)
+        Returns ([], inf) if no path exists
+    """
+    if start_id not in graph.vertices or end_id not in graph.vertices:
+        return [], float('inf')
+    
+    if start_id == end_id:
+        return [start_id], 0
+    
+    distances, predecessors = dijkstra(graph, start_id, end_id)
+    
+    if distances.get(end_id, float('inf')) == float('inf'):
+        return [], float('inf')
+    
+    path = reconstruct_path(predecessors, start_id, end_id)
+    cost = distances[end_id]
+    
+    return path, cost
+
+def get_positions_at_distance(graph: Graph, center_id: int, distance: int, 
+                              max_distance: Optional[int] = None) -> List[int]:
+    """
+    Get all positions at exactly 'distance' edges from center
+    Useful for determining attack range in combat
+    
+    Args:
+        graph: Combat graph
+        center_id: Center position ID
+        distance: Exact distance to find
+        max_distance: Maximum distance to search (optimization)
+    
+    Returns:
+        List of vertex IDs at exact distance
+    """
+    if center_id not in graph.vertices:
+        return []
+    
+    search_depth = max_distance if max_distance else distance
+    distances = bfs(graph, center_id, max_depth=search_depth)
+    
+    return [v_id for v_id, dist in distances.items() if dist == distance]
+
+def get_positions_within_range(graph: Graph, center_id: int, max_distance: int) -> List[int]:
+    """
+    Get all positions within max_distance edges from center
+    Useful for area-of-effect abilities in combat
+    
+    Args:
+        graph: Combat graph
+        center_id: Center position ID
+        max_distance: Maximum distance (inclusive)
+    
+    Returns:
+        List of vertex IDs within range (including center)
+    """
+    if center_id not in graph.vertices:
+        return []
+    
+    distances = bfs(graph, center_id, max_depth=max_distance)
+    return list(distances.keys())
+
+def is_position_reachable(graph: Graph, start_id: int, end_id: int, 
+                         max_cost: int) -> bool:
+    """
+    Check if a position is reachable within a maximum movement cost
+    Used to determine if entity can move to target position this turn
+    
+    Args:
+        graph: Combat graph
+        start_id: Starting position ID
+        end_id: Target position ID
+        max_cost: Maximum movement cost available (e.g., remaining AP)
+    
+    Returns:
+        True if reachable within cost, False otherwise
+    """
+    if start_id == end_id:
+        return True
+    
+    _, cost = dijkstra_combat_path(graph, start_id, end_id)
+    return cost <= max_cost
+
+def find_closest_position(graph: Graph, start_id: int, 
+                         target_positions: List[int]) -> Tuple[int, int]:
+    """
+    Find the closest target position from start
+    Useful for AI decision making in combat
+    
+    Args:
+        graph: Combat graph
+        start_id: Starting position ID
+        target_positions: List of potential target positions
+    
+    Returns:
+        Tuple of (closest_position_id, distance)
+        Returns (-1, inf) if no valid targets
+    """
+    if not target_positions:
+        return -1, float('inf')
+    
+    distances = bfs(graph, start_id)
+    
+    closest_id = -1
+    min_distance = float('inf')
+    
+    for target_id in target_positions:
+        dist = distances.get(target_id, float('inf'))
+        if dist < min_distance:
+            min_distance = dist
+            closest_id = target_id
+    
+    return closest_id, min_distance
+

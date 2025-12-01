@@ -1,6 +1,10 @@
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsEllipseItem
-from PySide6.QtGui import QPen, QBrush, QColor, QPainter, QKeyEvent
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QPointF, QEasingCurve
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsEllipseItem, QDialog
+from PySide6.QtGui import QBrush, QPen, QColor, QPainter, QPixmap, QKeyEvent
+from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QEasingCurve, QPropertyAnimation
+
+import random
+from core.game_state import GameState
+from core.obstacle_manager import ObstacleType
 from core.grid_map import GridMap, TileType
 
 class GridBoardView(QGraphicsView):
@@ -19,6 +23,9 @@ class GridBoardView(QGraphicsView):
         # Create grid map (20x20 with chambers and tunnels)
         self.grid_map = GridMap()  # Uses default 20x20
         self.grid_map.create_from_graph(self.game_state.graph)
+        
+        # Link grid_map to game_state so logic can access it
+        self.game_state.grid_map = self.grid_map
         
         # Create fog of war system
         from core.fog_of_war import FogOfWar
@@ -42,8 +49,67 @@ class GridBoardView(QGraphicsView):
         
         # Enable keyboard focus
         self.setFocusPolicy(Qt.StrongFocus)
+
+        # Start update timer to drive game loop (monsters, combat ticks)
+        self._last_tick_ms = None
+        self.update_timer = QTimer(self)
+        self.update_timer.setInterval(120)  # ms ~ 8-9 ticks/s (tune as needed)
+        self.update_timer.timeout.connect(self._on_update_tick)
+        self.update_timer.start()
         
-        self.refresh()
+        # Initialize dynamic layer groups for efficient updates
+        from PySide6.QtWidgets import QGraphicsItemGroup
+        self._dyn_players = QGraphicsItemGroup()
+        self._dyn_monsters = QGraphicsItemGroup()
+        self._dyn_fog = QGraphicsItemGroup()
+        self.scene.addItem(self._dyn_players)
+        self.scene.addItem(self._dyn_monsters)
+        self.scene.addItem(self._dyn_fog)
+        
+        # Set Z-values for proper layering
+        self._dyn_players.setZValue(5)   # Players on top
+        self._dyn_monsters.setZValue(4)  # Monsters below players
+        self._dyn_fog.setZValue(10)      # Fog above everything
+        
+        # Connect CombatManager callback for damage popups
+        if hasattr(self.game_state, 'combat_manager'):
+            self.game_state.combat_manager.on_damage_callback = self._on_combat_damage
+            self.game_state.combat_manager.on_death_callback = self._on_unit_death
+            
+        # Connect MonsterSystem callback for movement updates
+        if hasattr(self.game_state, 'monster_system'):
+            self.game_state.monster_system.on_monster_move = self._on_monster_move
+        
+        # Desenha apenas uma vez — elementos estáticos
+        self._draw_grid()
+        self._draw_obstacles()
+        self._draw_players()
+        self._draw_treasure()
+        self._draw_fog()
+
+
+    def _on_update_tick(self):
+        """Update only game logic every tick and refresh lightweight layers."""
+        from time import time
+
+        now = time()
+        if self._last_tick_ms is None:
+            self._last_tick_ms = now
+            return
+
+        delta = now - self._last_tick_ms
+        self._last_tick_ms = now
+
+        # Update core game logic: monsters, combat, cooldowns
+        try:
+            self.game_state.update(delta)
+        except Exception as e:
+            print(f"[ERROR] GameState.update(): {e}")
+
+        # NOTE: NÃO refresh dinâmico a cada tick - muito pesado!
+        # Refresh acontece apenas quando necessário (movimento, ações, etc)
+
+
     
     def refresh(self):
         """Redraw the entire board"""
@@ -52,14 +118,33 @@ class GridBoardView(QGraphicsView):
             if hasattr(sprite, 'timer'):
                 sprite.timer.stop()
         
+        # Clear scene (this will delete all items including our groups!)
         self.scene.clear()
         self.player_sprites.clear()
         
+        # CRITICAL: Recreate dynamic groups after scene.clear()
+        from PySide6.QtWidgets import QGraphicsItemGroup
+        self._dyn_players = QGraphicsItemGroup()
+        self._dyn_monsters = QGraphicsItemGroup()
+        self._dyn_fog = QGraphicsItemGroup()
+        self.scene.addItem(self._dyn_players)
+        self.scene.addItem(self._dyn_monsters)
+        self.scene.addItem(self._dyn_fog)
+        
+        # Set Z-values for proper layering
+        self._dyn_players.setZValue(5)
+        self._dyn_monsters.setZValue(4)
+        self._dyn_fog.setZValue(10)
+        
+        # Draw static elements
         self._draw_grid()
-        self._draw_obstacles()  # Draw obstacles after grid
-        self._draw_players()
+        self._draw_obstacles()
         self._draw_treasure()
-        self._draw_fog()  # Draw fog of war overlay
+        
+        # Draw dynamic elements into groups
+        self._draw_players(into=self._dyn_players)
+        self._draw_monsters(into=self._dyn_monsters)
+        self._draw_fog(into=self._dyn_fog)
         
         # Set scene rect
         scene_width = self.grid_map.width * self.grid_map.tile_size
@@ -192,14 +277,23 @@ class GridBoardView(QGraphicsView):
                     trap.setZValue(3)
                     self.scene.addItem(trap)
     
-    def _draw_players(self):
-        """Draw players on grid"""
+    def _draw_players(self, into=None):
+        """Draw players on grid
+        
+        Args:
+            into: Optional QGraphicsItemGroup or scene to add items to
+        """
         import os
         from .frame_animated_sprite import FrameAnimatedSprite
+        from PySide6.QtWidgets import QGraphicsItemGroup
         
+        into = into or self.scene  # Default to scene if not specified
         tile_size = self.grid_map.tile_size
         
         for player in self.game_state.players:
+            if not player.is_alive:
+                continue
+                
             grid_pos = self.grid_map.get_player_position(player.id)
             if not grid_pos:
                 continue
@@ -223,7 +317,13 @@ class GridBoardView(QGraphicsView):
                 sprite_y = py - 25
                 sprite.setPos(sprite_x, sprite_y)
                 sprite.setZValue(5)
-                self.scene.addItem(sprite)
+                
+                # Add to group or scene
+                if isinstance(into, QGraphicsItemGroup):
+                    into.addToGroup(sprite)
+                else:
+                    into.addItem(sprite)
+                    
                 self.player_sprites[player.id] = sprite
                 print(f"🎨 {player.name}: grid({x},{y}) -> pixel({px},{py}) -> sprite_pos({sprite_x},{sprite_y})")
             else:
@@ -232,8 +332,83 @@ class GridBoardView(QGraphicsView):
                 circle.setBrush(QBrush(QColor(player.color)))
                 circle.setPen(QPen(QColor("#000000"), 2))
                 circle.setZValue(5)
-                self.scene.addItem(circle)
+                
+                # Add to group or scene
+                if isinstance(into, QGraphicsItemGroup):
+                    into.addToGroup(circle)
+                else:
+                    into.addItem(circle)
 
+    
+    def _draw_monsters(self, into=None):
+        """Draw active monsters from MonsterSystem
+        
+        Args:
+            into: Optional QGraphicsItemGroup or scene to add items to
+        """
+        import os
+        from PySide6.QtWidgets import QGraphicsItemGroup
+        from PySide6.QtGui import QPixmap
+        
+        into = into or self.scene  # Default to scene if not specified
+        
+        # Check if MonsterSystem exists
+        if not hasattr(self.game_state, 'monster_system'):
+            return
+        
+        if not self.game_state.monster_system:
+            return
+        
+        tile_size = self.grid_map.tile_size
+        assets_dir = os.path.join(os.path.dirname(__file__), "..", "assets")
+        
+        # Load monster sprite (generic for now)
+        monster_pixmap = QPixmap(os.path.join(assets_dir, "monster.png"))
+        if not monster_pixmap.isNull():
+            monster_pixmap = monster_pixmap.scaled(
+                tile_size, tile_size,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+        
+        # Draw each active monster
+        for vertex_id, monster_state in self.game_state.monster_system.active_monsters.items():
+            if not monster_state.monster.is_alive():
+                continue
+            
+            # Get grid position from vertex
+            grid_pos = self.grid_map.get_position_for_vertex(vertex_id)
+            if not grid_pos:
+                continue
+            
+            x, y = grid_pos
+            px = x * tile_size
+            py = y * tile_size
+            
+            # Create monster sprite
+            if not monster_pixmap.isNull():
+                from PySide6.QtWidgets import QGraphicsPixmapItem
+                monster_item = QGraphicsPixmapItem(monster_pixmap)
+                monster_item.setPos(px, py)
+                monster_item.setZValue(4)
+                
+                # Add to group or scene
+                if isinstance(into, QGraphicsItemGroup):
+                    into.addToGroup(monster_item)
+                else:
+                    into.addItem(monster_item)
+            else:
+                # Fallback: red rectangle
+                monster_rect = QGraphicsRectItem(px + 10, py + 10, tile_size - 20, tile_size - 20)
+                monster_rect.setBrush(QBrush(QColor("#8B0000")))
+                monster_rect.setPen(QPen(QColor("#FF0000"), 2))
+                monster_rect.setZValue(4)
+                
+                # Add to group or scene
+                if isinstance(into, QGraphicsItemGroup):
+                    into.addToGroup(monster_rect)
+                else:
+                    into.addItem(monster_rect)
     
     def _draw_treasure(self):
         """Draw treasure marker"""
@@ -253,8 +428,15 @@ class GridBoardView(QGraphicsView):
             treasure.setZValue(3)
             self.scene.addItem(treasure)
     
-    def _draw_fog(self):
-        """Draw fog of war overlay"""
+    def _draw_fog(self, into=None):
+        """Draw fog of war overlay
+        
+        Args:
+            into: Optional QGraphicsItemGroup or scene to add items to
+        """
+        from PySide6.QtWidgets import QGraphicsItemGroup
+        
+        into = into or self.scene  # Default to scene if not specified
         tile_size = self.grid_map.tile_size
         
         # Update fog visibility based on current player positions
@@ -283,8 +465,199 @@ class GridBoardView(QGraphicsView):
                     fog_tile.setBrush(QBrush(QColor(0, 0, 0, opacity)))
                     fog_tile.setPen(QPen(Qt.NoPen))
                     fog_tile.setZValue(10)  # Above everything
-                    self.scene.addItem(fog_tile)
+                    
+                    # Add to group or scene
+                    if isinstance(into, QGraphicsItemGroup):
+                        into.addToGroup(fog_tile)
+                    else:
+                        into.addItem(fog_tile)
+
+    def _refresh_dynamic_layers(self):
+        """Redraw players, monsters and fog only.
+        
+        Safely removes all child items from dynamic groups and redraws them
+        without touching static elements (grid, obstacles, treasure).
+        """
+        try:
+            # Check if groups still exist (might be deleted by scene.clear())
+            if not hasattr(self, '_dyn_players') or self._dyn_players is None:
+                return
+            
+            # Remove all children from player group
+            for item in list(self._dyn_players.childItems()):
+                self._dyn_players.removeFromGroup(item)
+                self.scene.removeItem(item)
+                # Stop sprite timers if present
+                if hasattr(item, 'timer'):
+                    item.timer.stop()
+            
+            # Remove all children from monster group
+            for item in list(self._dyn_monsters.childItems()):
+                self._dyn_monsters.removeFromGroup(item)
+                self.scene.removeItem(item)
+            
+            # Remove all children from fog group
+            for item in list(self._dyn_fog.childItems()):
+                self._dyn_fog.removeFromGroup(item)
+                self.scene.removeItem(item)
+            
+            # Clear player sprites tracking (will be rebuilt)
+            self.player_sprites.clear()
+            
+            # Redraw dynamic elements into their respective groups
+            self._draw_players(into=self._dyn_players)
+            self._draw_monsters(into=self._dyn_monsters)
+            self._draw_fog(into=self._dyn_fog)
+        except RuntimeError as e:
+            # Groups were deleted (e.g., by scene.clear()), skip this refresh
+            print(f"[DEBUG] _refresh_dynamic_layers skipped: {e}")
+            pass
     
+    def show_damage_popup(self, x, y, amount, target_type="player"):
+        """Show animated damage popup at grid position
+        
+        Args:
+            x: Grid X coordinate
+            y: Grid Y coordinate
+            amount: Damage amount to display
+            target_type: "player" or "monster" for color coding
+        """
+        from PySide6.QtWidgets import QGraphicsSimpleTextItem
+        from PySide6.QtCore import QTimer
+        from PySide6.QtGui import QFont
+        
+        tile_size = self.grid_map.tile_size
+        px = x * tile_size + tile_size // 2
+        py = y * tile_size + tile_size // 2
+        
+        # Create text item
+        text = QGraphicsSimpleTextItem(f"-{amount}")
+        
+        # Set color based on target type
+        if target_type == "monster":
+            text.setBrush(QBrush(QColor("#FF4444")))  # Red for monster damage
+        else:
+            text.setBrush(QBrush(QColor("#FFAA00")))  # Orange for player damage
+        
+        # Make text bold and larger
+        font = QFont()
+        font.setBold(True)
+        font.setPointSize(14)
+        text.setFont(font)
+        
+        text.setPos(px - 15, py - 25)
+        text.setZValue(15)  # Above everything
+        
+        # Add to scene
+        self.scene.addItem(text)
+        
+        # Animate fade out and remove after 600ms
+        # Animate fade out and remove after 600ms
+        def cleanup():
+            try:
+                if text.scene():
+                    self.scene.removeItem(text)
+            except RuntimeError:
+                pass # Already deleted
+        QTimer.singleShot(600, cleanup)
+
+    def _on_combat_damage(self, player, monster, amount, target_type):
+        """Callback from CombatManager when damage occurs"""
+        # Determine position based on player's current vertex
+        # We need to map vertex to grid coordinates
+        try:
+            vertex_id = player.current_vertex_id
+            grid_pos = self.grid_map.get_position_for_vertex(vertex_id)
+            
+            if grid_pos:
+                x, y = grid_pos
+                # Offset slightly for player vs monster
+                if target_type == "monster":
+                    x += 0.3 # Shift right for monster damage
+                    # Trigger shake animation for monster (if we can identify sprite)
+                    # For now, just shake the popup slightly
+                else:
+                    x -= 0.3 # Shift left for player damage
+                    # Shake player sprite
+                    if player.id in self.player_sprites:
+                        self._shake_sprite(self.player_sprites[player.id])
+                    
+                self.show_damage_popup(x, y, amount, target_type)
+        except Exception as e:
+            print(f"[ERROR] _on_combat_damage: {e}")
+
+    def _shake_sprite(self, sprite_item):
+        """Simple shake animation for sprite"""
+        from PySide6.QtCore import QPropertyAnimation, QPointF
+        
+        # This requires the sprite to be a QObject or have properties we can animate
+        # Since our sprites are QGraphicsPixmapItem, we can't easily use QPropertyAnimation directly
+        # without a wrapper. For now, let's do a manual jitter.
+        orig_pos = sprite_item.pos()
+        
+        def jitter(count=0):
+            if count > 4:
+                sprite_item.setPos(orig_pos)
+                return
+            
+            offset_x = random.randint(-5, 5)
+            offset_y = random.randint(-5, 5)
+            sprite_item.setPos(orig_pos.x() + offset_x, orig_pos.y() + offset_y)
+            QTimer.singleShot(50, lambda: jitter(count + 1))
+            
+        jitter()
+
+    def _on_monster_move(self, ms, old_v, new_v):
+        """Callback when a monster moves"""
+        # Trigger refresh of dynamic layers to show new position
+        # We could optimize to only move the specific sprite, but full refresh is safer for now
+        self._refresh_dynamic_layers()
+    
+    def _on_unit_death(self, unit, unit_type):
+        """Callback when a unit dies"""
+        print(f"[DEBUG] Unit died: {unit} ({unit_type})")
+        
+        # Determine position
+        x, y = 0, 0
+        if unit_type == "player":
+            grid_pos = self.grid_map.get_player_position(unit.id)
+            if grid_pos: x, y = grid_pos
+        else:
+            # Monster
+            if hasattr(unit, 'grid_pos') and unit.grid_pos:
+                x, y = unit.grid_pos
+            else:
+                # Try to find via active monsters if needed, but grid_pos should be set for static ones
+                pass
+
+        # Show skull effect
+        tile_size = self.grid_map.tile_size
+        px = x * tile_size + tile_size // 2
+        py = y * tile_size + tile_size // 2
+        
+        from PySide6.QtWidgets import QGraphicsSimpleTextItem
+        from PySide6.QtGui import QFont
+        
+        skull = QGraphicsSimpleTextItem("💀")
+        font = QFont()
+        font.setPointSize(20)
+        skull.setFont(font)
+        skull.setPos(px - 15, py - 25)
+        skull.setZValue(20)
+        self.scene.addItem(skull)
+        
+        # Animate fade out
+        def cleanup():
+            try:
+                if skull.scene():
+                    self.scene.removeItem(skull)
+            except RuntimeError:
+                pass
+        QTimer.singleShot(1500, cleanup)
+        
+        # Refresh board to remove the unit sprite
+        self._refresh_dynamic_layers()
+
     def keyPressEvent(self, event: QKeyEvent):
         """Handle keyboard input for movement - separate controls per player"""
         if self.is_animating:
@@ -296,6 +669,8 @@ class GridBoardView(QGraphicsView):
         player_to_move = None
         direction = None
         new_x, new_y = 0, 0
+
+        self.game_state.log(f"🎮 Tecla pressionada: {event.key()}")
         
         # Player Vermelho (Red) - Arrow Keys
         if key == Qt.Key_Up:
@@ -492,7 +867,7 @@ class GridBoardView(QGraphicsView):
         dialog = InteractionDialog(obstacle, player, self)
         result = dialog.exec()
         
-        if result == dialog.Accepted:
+        if result == QDialog.Accepted:
             action = dialog.get_selected_action()
             self.handle_interaction_action(action, obstacle, player)
     
@@ -503,12 +878,25 @@ class GridBoardView(QGraphicsView):
         if action == "attack":
             # Start combat with monster
             if obstacle.obstacle_type == ObstacleType.MONSTER:
-                self.game_state.log(f"⚔️ {player.name} atacou o {obstacle.data.get('type', 'monstro')}!")
-                # TODO: Integrate with existing combat system
-                # For now, remove obstacle after "defeating" it
-                obstacle.is_active = False
-                self.game_state.log(f"✅ {player.name} derrotou o monstro!")
-                self.refresh()
+                monster_name = obstacle.data.get('type', 'monstro')
+                # Fix: Obstacle uses .position tuple, not .grid_x/.grid_y
+                px, py = obstacle.position
+                
+                print(f"[DEBUG] Tentando combate em ({px}, {py}) contra {monster_name}")
+                
+                # Busca o monstro nessa posição
+                monster = self.game_state.get_monster_at(px, py)
+
+                if monster:
+                    print(f"[DEBUG] Monstro encontrado: {monster}")
+                    self.game_state.log(f"⚔️ {player.name} iniciou combate contra {monster_name}!")
+                    
+                    # Inicia combate tick-based via CombatManager
+                    self.game_state.start_combat(player, monster)
+                    print(f"[DEBUG] Combate iniciado via CombatManager")
+                else:
+                    print(f"[ERROR] Nenhum monstro em ({px}, {py})!")
+                    self.game_state.log(f"⚠️ Nenhum monstro encontrado em ({px}, {py})")
         
         elif action == "item":
             # Show inventory and use item

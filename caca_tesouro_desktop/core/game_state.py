@@ -13,6 +13,8 @@ from .algorithms import bfs, dijkstra, a_star
 from .combat import CombatSystem, CombatResult
 from .events import EventManager, EventType
 from .resources import ResourceManager, ResourceType
+from .systems.monster_system import MonsterSystem
+from .systems.combat_system import CombatManager
 
 class GameMode(Enum):
     """Game modes"""
@@ -38,7 +40,10 @@ class GameState:
         
         # Game objectives
         self.treasure_vertex_id: Optional[int] = None
+        # Game objectives
+        self.treasure_vertex_id: Optional[int] = None
         self.boss_monster: Optional[Monster] = None
+        self.monsters: List[Monster] = [] # Legacy list fallback
         
         # Game state
         self.turn_number = 0
@@ -59,6 +64,11 @@ class GameState:
         self.random_events_per_turn = True
         self.monster_spawn_chance = 0.15
         self.resource_spawn_chance = 0.2
+
+        #Systems
+        self.monster_system = MonsterSystem(self)
+        self.combat_manager = CombatManager(self)
+
     
     @property
     def current_player(self) -> Optional[Player]:
@@ -184,7 +194,84 @@ class GameState:
         
         # Check for victory/defeat
         self.check_game_over()
+
+    def start_combat(self, player, monster):
+        """
+        Inicia um combate entre um jogador e um monstro via CombatManager.
+        """
+        if not self.combat_manager:
+            print("[ERROR] CombatManager não inicializado!")
+            return
+
+        print(f"[COMBAT] {player.name} iniciou combate contra {monster.monster_type.value.title()}!")
+        self.log(f"⚔️ (TickCombat) Iniciando combate: {player.name} vs {monster.monster_type.value.title()}")
+        self.combat_manager.start_combat(player, monster)
+
+    def get_monster_at(self, gx, gy):
+        """
+        Retorna o monstro que está na posição de grid (gx, gy).
+        Procura tanto em MonsterSystem quanto na lista legada.
+        """
+        # Primeiro tenta MonsterSystem (novo)
+        if hasattr(self, 'monster_system') and self.monster_system:
+            # Procura o vertex que corresponde a essa grid position
+            vertex_id = self.grid_map.get_vertex_at_position(gx, gy) if hasattr(self, 'grid_map') else None
+            
+            if vertex_id and vertex_id in self.monster_system.active_monsters:
+                ms = self.monster_system.active_monsters[vertex_id]
+                return ms.monster
+        
+        # Fallback 1: Check ObstacleManager (static obstacles that are monsters)
+        if hasattr(self, 'grid_map') and hasattr(self.grid_map, 'obstacle_manager'):
+            obstacle = self.grid_map.obstacle_manager.get_obstacle((gx, gy))
+            if obstacle and obstacle.obstacle_type.value == "monster":
+                # Create a temporary monster wrapper if needed
+                # Ideally we should sync this with MonsterSystem, but for now just return a Monster object
+                from .obstacles import Monster, MonsterType
+                m_type_str = obstacle.data.get('type', 'goblin')
+                try:
+                    m_type = MonsterType(m_type_str)
+                except:
+                    m_type = MonsterType.GOBLIN
+                
+                # Check if we already have a live monster for this obstacle in monsters list
+                for m in self.monsters:
+                    if getattr(m, 'grid_pos', None) == (gx, gy):
+                        return m
+                
+                # Create new temp monster
+                new_monster = Monster(m_type, level=obstacle.data.get('level', 1))
+                new_monster.grid_pos = (gx, gy)
+                self.monsters.append(new_monster)
+                return new_monster
+
+        # Fallback 2: legacy list of monsters
+        for monster in self.monsters:
+            if hasattr(monster, "grid_pos") and monster.grid_pos == (gx, gy):
+                return monster
+        
+        return None
+
     
+    def update(self, delta_time: float):
+        # """Global tick update called by the UI."""
+        # self.combat_manager.update(delta_time)
+        # self.monster_system.update(delta_time)
+        if self.monster_system:
+            try:
+                self.monster_system.update(delta_time)
+            except Exception as e:
+                self.log(f"[ERROR] MonsterSystem: {e}")
+
+        if self.combat_manager:
+            try:
+                self.combat_manager.update(delta_time)
+            except Exception as e:
+                self.log(f"[ERROR] CombatManager: {e}")
+
+
+
+
     def end_turn(self):
         """End current player's turn"""
         player = self.current_player
@@ -310,9 +397,16 @@ class GameState:
             if message:
                 self.log(message)
         
-        # Handle monster encounter
+        # Handle monster encounter via MonsterSystem
         if vertex.has_monster and vertex.monster_type:
-            self.trigger_combat(player, vertex)
+            # Let MonsterSystem decide (ambush, engagement, etc.)
+            try:
+                self.monster_system.handle_player_enter_vertex(player, vertex)
+            except Exception as e:
+                # Fallback to immediate combat if something fails
+                self.log(f"[ERROR] monster_system.handle_player_enter_vertex: {e}")
+                self.trigger_combat(player, vertex)
+
         
         # Handle treasure chest
         if vertex.has_treasure_chest:
@@ -356,28 +450,65 @@ class GameState:
     
     def trigger_combat(self, player: Player, vertex) -> CombatResult:
         """Trigger combat with monster at vertex"""
-        monster = Monster(MonsterType[vertex.monster_type.upper()], player.level)
+        # If MonsterSystem has active monster, use it
+        # ==========================================================
+        # 🔥 ANTI-DUPLICATE COMBAT GUARD
+        # ==========================================================
+        # Se já existe um combate envolvendo este player, NÃO iniciar outro
+        for inst in self.combat_manager.active_instances:
+            if inst.player.id == player.id and not inst.ended:
+                self.log(f"[DEBUG] Ignorando trigger_combat duplicado para {player.name}")
+                return inst.get_result()
         
+        active_ms = None
+        try:
+            active_ms = self.monster_system.active_monsters.get(vertex.id)
+        except Exception:
+            active_ms = None
+
+        if active_ms:
+            monster = active_ms.monster
+        else:
+            # fallback: create a Monster from vertex.monster_type
+            try:
+                monster = Monster(MonsterType[vertex.monster_type.upper()], player.level)
+            except Exception:
+                monster = Monster(MonsterType.GOBLIN, player.level)
+
         self.log(f"\n⚔️ COMBATE: {player.name} vs {monster}")
-        
-        result = CombatSystem.execute_combat(player, monster, self.auto_combat)
-        
-        # Log combat
-        for msg in result.combat_log:
-            self.log(msg)
-        
-        # Clear monster if defeated
-        if result.player_won:
-            vertex.has_monster = False
-            vertex.monster_type = None
-        
-        # Check if player died
-        if result.player_died:
-            self.game_over = True
-            self.game_mode = GameMode.DEFEAT
-            self.log(f"\n💀 GAME OVER - {player.name} foi derrotado!")
-        
-        return result
+
+        # If auto_combat is True, use tick-based CombatManager for simultaneous hits
+        if self.auto_combat:
+            inst = self.combat_manager.start_combat(player, monster)
+            # For auto immediate execution, run a fast loop until finished (only if UI is not handling ticks)
+            # But prefer letting UI call update(delta). Here, run a short blocking fallback to completion for headless runs.
+            # Run small simulated ticks until finished to return a CombatResult immediately
+            if hasattr(self, 'run_combat_blocking') and self.run_combat_blocking:
+                # Blocking mode (for non-UI tests)
+                while not inst.ended:
+                    inst.tick(0.2)
+                return inst.get_result()
+            else:
+                # Non-blocking: return an initial CombatResult (UI will display as combat progresses)
+                res = inst.get_result()
+                # If res empty, create minimal CombatResult
+                return res
+        else:
+            # Fallback to legacy blocking combat
+            result = CombatSystem.execute_combat(player, monster, self.auto_combat)
+            # Log combat
+            for msg in result.combat_log:
+                self.log(msg)
+            # Clear monster if defeated
+            if result.player_won:
+                vertex.has_monster = False
+                vertex.monster_type = None
+            if result.player_died:
+                self.game_over = True
+                self.game_mode = GameMode.DEFEAT
+                self.log(f"\n💀 GAME OVER - {player.name} foi derrotado!")
+            return result
+
     
     # ============================================
     # CARD SYSTEM
@@ -443,12 +574,18 @@ class GameState:
     
     def spawn_monsters(self):
         """Spawn monsters in unexplored vertices"""
+        # Ensure MonsterSystem recognizes them
+        try:
+            self.monster_system.spawn_from_graph()
+        except Exception:
+            pass
         spawned = self.graph.spawn_random_monsters(
             self.monster_spawn_chance,
             [mt.value for mt in MonsterType]
         )
         if spawned:
             self.log(f"👹 {len(spawned)} monstros apareceram nas cavernas!")
+
     
     def spawn_resources(self):
         """Spawn resources in unexplored vertices"""

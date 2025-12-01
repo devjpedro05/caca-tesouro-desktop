@@ -23,17 +23,24 @@ class BoardView(QGraphicsView):
         self.refresh()
 
     def refresh(self):
+        """Draw static map only once or on major events."""
         self.scene.clear()
-        self.vertex_items.clear()
-        self.edge_items.clear()
-        
-        self._draw_graph()
-        self._draw_players()
+
+        # draw grid (static)
+        self._draw_grid()
+
+        # draw caves, walls, obstacles (static)
+        self._draw_obstacles()
+
+        # dynamic layers created empty now
+        self._ensure_dynamic_layers()
+
+        # draw treasure (static)
         self._draw_treasure()
-        
-        # Set scene rect to fit content with some padding
-        items_rect = self.scene.itemsBoundingRect()
-        self.scene.setSceneRect(items_rect.adjusted(-50, -50, 50, 50))
+
+        # initial dynamic draw
+        self._refresh_dynamic_layers()
+
 
     def _draw_graph(self):
         # Draw edges first so they are behind vertices
@@ -293,3 +300,12 @@ class BoardView(QGraphicsView):
                 text.setPos(v.x - text.boundingRect().width()/2, v.y - 45)
                 text.setZValue(4)
                 self.scene.addItem(text)
+
+    def _ensure_dynamic_layers(self):
+        if hasattr(self, "_dyn_players"):
+            return
+
+        self._dyn_players = self.scene.createItemGroup([])
+        self._dyn_monsters = self.scene.createItemGroup([])
+        self._dyn_fog = self.scene.createItemGroup([])
+
