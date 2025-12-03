@@ -34,10 +34,29 @@ class CombatSystem:
     def calculate_damage(attacker_attack: int, defender_defense: int, 
                         is_critical: bool = False) -> int:
         """
-        Calculate damage dealt
-        Formula: (attack - defense) * variance * critical_multiplier
+        Calculate damage dealt - RPG-style balanced formula
+        
+        Formula:
+        - Defense reduces damage by percentage (not subtraction)
+        - Each defense point = 2% damage reduction (capped at 60%)
+        - Minimum damage is 5 (ensures combat progress)
+        - Variance adds ±20% randomness
+        - Critical hits deal 2x damage
+        
+        Examples:
+        - Attack 10, Defense 0: 10 * 1.0 = 10 damage
+        - Attack 10, Defense 5: 10 * 0.90 = 9 damage  
+        - Attack 10, Defense 20: 10 * 0.60 = 6 damage
+        - Attack 10, Defense 50: 10 * 0.40 = 4 → min 5 damage
         """
-        base_damage = max(1, attacker_attack - defender_defense)
+        # Calculate defense reduction (2% per point, max 60%)
+        defense_reduction = min(0.60, defender_defense * 0.02)
+        
+        # Apply defense reduction to attack
+        base_damage = attacker_attack * (1.0 - defense_reduction)
+        
+        # Ensure minimum damage
+        base_damage = max(5, base_damage)
         
         # Add variance (±20%)
         variance = random.uniform(0.8, 1.2)
@@ -47,7 +66,7 @@ class CombatSystem:
         if is_critical:
             damage = int(damage * 2.0)
         
-        return max(1, damage)
+        return max(5, damage)  # Ensure at least 5 damage
     
     @staticmethod
     def check_critical_hit(critical_chance: float) -> bool:
