@@ -549,6 +549,10 @@ class GridBoardView(QGraphicsView):
                 goblin_sprite = GoblinSprite()
                 goblin_sprite.setZValue(4)
                 
+                # Set the level from monster
+                if hasattr(monster_state.monster, 'level'):
+                    goblin_sprite.set_level(monster_state.monster.level)
+                
                 # Add to group or scene
                 if isinstance(into, QGraphicsItemGroup):
                     into.addToGroup(goblin_sprite)
@@ -1165,6 +1169,31 @@ class GridBoardView(QGraphicsView):
         dialog.setModal(True)
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
+        
+        # Set dialog stylesheet for light text on dark background
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+            }
+            QLabel {
+                color: #ffffff;
+                background-color: transparent;
+            }
+            QPushButton {
+                background-color: #4a4a4a;
+                color: #ffffff;
+                border: 2px solid #666666;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+                border-color: #888888;
+            }
+            QPushButton:pressed {
+                background-color: #3a3a3a;
+            }
+        """)
         
         layout = QVBoxLayout()
         

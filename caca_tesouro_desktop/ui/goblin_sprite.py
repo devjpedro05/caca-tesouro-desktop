@@ -2,8 +2,8 @@
 Goblin Animated Sprite System
 Uses individual frame images for Goblin animation
 """
-from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem
-from PySide6.QtGui import QPixmap, QBrush, QPen, QColor
+from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsTextItem
+from PySide6.QtGui import QPixmap, QBrush, QPen, QColor, QFont
 from PySide6.QtCore import QTimer, Qt
 import os
 import glob
@@ -31,6 +31,7 @@ class GoblinSprite(QGraphicsPixmapItem):
         self.current_hp = 100
         self.hp_bar_width = 100  # Increased significantly
         self.hp_bar_height = 14  # Much taller
+        self.level = 1  # Default level
         
         # Animation for HP bar
         self.target_hp_width = self.hp_bar_width
@@ -190,6 +191,15 @@ class GoblinSprite(QGraphicsPixmapItem):
         self.hp_bar_fg.setBrush(QBrush(QColor("#00FF00")))  # Bright green
         self.hp_bar_fg.setPen(QPen(Qt.PenStyle.NoPen))
         self.hp_bar_fg.setZValue(11)
+        
+        # Level text (displayed to the right of HP bar)
+        self.level_text = QGraphicsTextItem(self)
+        self.level_text.setPlainText(f"Lv.{self.level}")
+        self.level_text.setDefaultTextColor(QColor("#FFFF00"))  # Yellow
+        font = QFont("Arial", 10, QFont.Weight.Bold)
+        self.level_text.setFont(font)
+        self.level_text.setPos(self.hp_bar_width - 5, -28)  # Position to right of HP bar
+        self.level_text.setZValue(12)
     
     def _animate_hp_bar(self):
         """Animate HP bar smoothly transitioning to target width"""
@@ -240,6 +250,16 @@ class GoblinSprite(QGraphicsPixmapItem):
         # Start smooth animation to target width
         if not self.animation_timer.isActive():
             self.animation_timer.start(self.animation_speed_hp)
+    
+    def set_level(self, level):
+        """Set the Goblin's level and update the display
+        
+        Args:
+            level: The level number to display
+        """
+        self.level = level
+        if hasattr(self, 'level_text'):
+            self.level_text.setPlainText(f"Lv.{self.level}")
 
     def stop_animation(self):
         """Stop animation"""

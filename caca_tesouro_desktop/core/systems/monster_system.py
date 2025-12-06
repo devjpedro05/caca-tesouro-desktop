@@ -52,7 +52,15 @@ class MonsterSystem:
                 except Exception:
                     # fallback
                     mtype = MonsterType.GOBLIN
-                monster = Monster(mtype, level=1)
+                
+                # v2 has stronger Goblin (level 2), v5 (centro) has level 4
+                if v_id == 2:
+                    level = 2
+                elif v_id == 5:
+                    level = 4
+                else:
+                    level = 1
+                monster = Monster(mtype, level=level)
                 # Optionally assign simple 2-point patrol around vertex (neighbors)
                 neighbors = [n for n, e in self.gs.graph.neighbors(v_id)]
                 patrol_points = [v_id] + (neighbors[:1] if neighbors else [])

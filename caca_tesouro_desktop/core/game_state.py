@@ -117,11 +117,17 @@ class GameState:
         # Spawn initial resources (NO random monsters to avoid conflicts)
         gs.spawn_resources()
         
-        # FORCE spawn exactly 2 monsters (NO random spawns)
+        # FORCE spawn exactly 4 monsters (NO random spawns)
         # v0="Entrada" at (9,2) (Player Vermelho), v1="Caverna Azul" at (3,6) (Player Azul)
-        # Spawn in v4="Ponte de Pedra" at (15,6) and v6="Câmara do Tesouro" at (9,18)
+        # Spawn in v2="Salão dos Espelhos", v4="Ponte de Pedra", v5="Lago Subterrâneo" (centro) and v6="Câmara do Tesouro"
+        gs.graph.vertices[2].has_monster = True
+        gs.graph.vertices[2].monster_type = "goblin"
+        
         gs.graph.vertices[4].has_monster = True
         gs.graph.vertices[4].monster_type = "goblin"
+        
+        gs.graph.vertices[5].has_monster = True
+        gs.graph.vertices[5].monster_type = "goblin"
         
         gs.graph.vertices[6].has_monster = True  
         gs.graph.vertices[6].monster_type = "orc"

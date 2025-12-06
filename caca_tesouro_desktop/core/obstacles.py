@@ -55,9 +55,9 @@ class Monster:
     def _apply_type_stats(self):
         """Apply stats based on monster type"""
         if self.monster_type == MonsterType.GOBLIN:
-            self.max_hp = 25
-            self.attack = 6
-            self.defense = 1
+            self.max_hp = 30
+            self.attack = 12
+            self.defense = 2
             self.speed = 8
             self.surprise_attack_chance = 0.25
             self.gold_reward = (5, 15)
