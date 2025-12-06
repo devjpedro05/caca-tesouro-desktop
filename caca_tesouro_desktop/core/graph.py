@@ -270,6 +270,10 @@ class Graph:
         
         spawned = []
         for vertex in self.vertices.values():
+            # NEVER spawn in player starting chambers (v0 and v1)
+            if vertex.id == 0 or vertex.id == 1:
+                continue
+                
             if not vertex.has_monster and not vertex.explored:
                 if random.random() < probability:
                     vertex.has_monster = True

@@ -41,11 +41,20 @@ class GridBoardView(QGraphicsView):
         # Player sprites
         self.player_sprites = {}  # player_id -> sprite
         
+        # Monster sprites
+        self.monster_sprites = {}  # vertex_id -> sprite
+        self.monster_patrol_data = {}  # vertex_id -> {offset_x, offset_y, direction, speed}
+        
         # Animation
         self.is_animating = False
         self.current_animation = None
         
         self.main_window = None
+        
+        # Key state tracking for continuous movement
+        self.pressed_keys = set()  # Track currently pressed keys
+        self.movement_cooldown = 0.0  # Cooldown between movements (seconds)
+        self.movement_delay = 0.15  # Delay between movements (150ms)
         
         # Enable keyboard focus
         self.setFocusPolicy(Qt.StrongFocus)
@@ -82,11 +91,25 @@ class GridBoardView(QGraphicsView):
         
         # Desenha apenas uma vez — elementos estáticos
         self._draw_grid()
+        self._draw_spawn_chambers()  # Draw dungeon floor texture in player spawn chambers
         self._draw_obstacles()
         self._draw_players()
+        self._draw_monsters()  # Draw animated Goblin sprites
         self._draw_treasure()
         self._draw_fog()
 
+
+    def center_on_current_player(self):
+        """Center the view on the current player's position"""
+        current_player = self.game_state.current_player
+        if not current_player:
+            return
+        
+        # Get player sprite
+        sprite = self.player_sprites.get(current_player.id)
+        if sprite:
+            # Center view on player
+            self.centerOn(sprite)
 
     def _on_update_tick(self):
         """Update only game logic every tick and refresh lightweight layers."""
@@ -100,14 +123,71 @@ class GridBoardView(QGraphicsView):
         delta = now - self._last_tick_ms
         self._last_tick_ms = now
 
+        # Update movement cooldown
+        if self.movement_cooldown > 0:
+            self.movement_cooldown -= delta
+        
+        # Process continuous movement if cooldown expired
+        if self.movement_cooldown <= 0 and self.pressed_keys and not self.is_animating:
+            self._process_continuous_movement()
+            self.movement_cooldown = self.movement_delay
+
+        # Update Goblin patrol positions
+        self._update_goblin_patrol(delta)
+
         # Update core game logic: monsters, combat, cooldowns
         try:
             self.game_state.update(delta)
+            # Advance animations
+            self.scene.advance()
         except Exception as e:
             print(f"[ERROR] GameState.update(): {e}")
 
         # NOTE: NÃO refresh dinâmico a cada tick - muito pesado!
         # Refresh acontece apenas quando necessário (movimento, ações, etc)
+    
+    def _update_goblin_patrol(self, delta):
+        """Update Goblin patrol positions within their chambers"""
+        tile_size = self.grid_map.tile_size
+        
+        for vertex_id, patrol in list(self.monster_patrol_data.items()):
+            # Check if monster still exists and is alive
+            if vertex_id not in self.monster_sprites:
+                continue
+            
+            if hasattr(self.game_state, 'monster_system'):
+                monster_state = self.game_state.monster_system.active_monsters.get(vertex_id)
+                if not monster_state or not monster_state.monster.is_alive():
+                    continue
+            
+            # Update horizontal patrol position
+            patrol['offset_x'] += patrol['direction'] * patrol['speed'] * delta
+            
+            # Reverse direction when reaching patrol bounds
+            if abs(patrol['offset_x']) > patrol['patrol_range']:
+                patrol['direction'] *= -1
+                patrol['offset_x'] = patrol['patrol_range'] * patrol['direction']
+                
+                # Update sprite direction
+                sprite = self.monster_sprites.get(vertex_id)
+                if sprite:
+                    if patrol['direction'] > 0:
+                        sprite.walk_right()
+                    else:
+                        sprite.walk_left()
+            
+            # Update sprite position
+            sprite = self.monster_sprites.get(vertex_id)
+            if sprite:
+                chamber_info = self.grid_map.chambers.get(vertex_id)
+                if chamber_info:
+                    center_x, center_y = chamber_info['center']
+                    px = (center_x + patrol['offset_x']) * tile_size + tile_size // 2
+                    py = (center_y + patrol['offset_y']) * tile_size + tile_size // 2
+                    
+                    sprite_x = px - 30
+                    sprite_y = py - 30
+                    sprite.setPos(sprite_x, sprite_y)
 
 
     
@@ -118,9 +198,14 @@ class GridBoardView(QGraphicsView):
             if hasattr(sprite, 'timer'):
                 sprite.timer.stop()
         
+        for sprite in self.monster_sprites.values():
+            if hasattr(sprite, 'timer'):
+                sprite.timer.stop()
+        
         # Clear scene (this will delete all items including our groups!)
         self.scene.clear()
         self.player_sprites.clear()
+        self.monster_sprites.clear()  # Must clear because scene.clear() deleted the sprites
         
         # CRITICAL: Recreate dynamic groups after scene.clear()
         from PySide6.QtWidgets import QGraphicsItemGroup
@@ -138,6 +223,7 @@ class GridBoardView(QGraphicsView):
         
         # Draw static elements
         self._draw_grid()
+        self._draw_spawn_chambers()  # Draw dungeon floor in spawn chambers
         self._draw_obstacles()
         self._draw_treasure()
         
@@ -223,9 +309,70 @@ class GridBoardView(QGraphicsView):
                 tile.setZValue(0)
                 self.scene.addItem(tile)
 
+    def _draw_spawn_chambers(self):
+        """Draw special textures covering chambers:
+        - dungeon_floor.png for player spawn chambers (v0, v1)
+        - path_texture.png for other chambers (v2, v3, v4, v5)
+        """
+        import os
+        from PySide6.QtGui import QPixmap
+        from PySide6.QtWidgets import QGraphicsPixmapItem
+        
+        tile_size = self.grid_map.tile_size
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        # Load textures
+        floor_path = os.path.join(base_dir, "assets", "dungeon_floor.png")
+        path_path = os.path.join(base_dir, "assets", "path_texture.png")
+        
+        floor_pixmap = QPixmap(floor_path) if os.path.exists(floor_path) else QPixmap()
+        path_pixmap = QPixmap(path_path) if os.path.exists(path_path) else QPixmap()
+        
+        # Define which texture to use for each chamber
+        # v0, v1 = player spawns (dungeon_floor)
+        # v2, v3, v4, v5 = other chambers (path_texture)
+        # v6 = treasure chamber (already has treasure_glow)
+        chamber_textures = {
+            0: floor_pixmap,  # Player Vermelho spawn
+            1: floor_pixmap,  # Player Azul spawn
+            2: path_pixmap,   # Salão dos Ecos
+            3: path_pixmap,   # Túnel Escuro
+            4: path_pixmap,   # Ponte de Pedra
+            5: path_pixmap,   # Lago Subterrâneo
+            # v6 (treasure) already handled by _draw_treasure()
+        }
+        
+        for vertex_id, texture_pixmap in chamber_textures.items():
+            if texture_pixmap.isNull():
+                continue
+                
+            chamber_info = self.grid_map.chambers.get(vertex_id)
+            if not chamber_info:
+                continue
+            
+            # Get chamber bounds (x1, y1, x2, y2)
+            x1, y1, x2, y2 = chamber_info['bounds']
+            
+            # Chamber is 2x2 tiles
+            chamber_pixel_size = tile_size * 2
+            px = x1 * tile_size
+            py = y1 * tile_size
+            
+            # Scale texture to fit entire chamber (2x2 tiles)
+            scaled_pixmap = texture_pixmap.scaled(
+                chamber_pixel_size,
+                chamber_pixel_size,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            texture_item = QGraphicsPixmapItem(scaled_pixmap)
+            texture_item.setPos(px, py)
+            texture_item.setZValue(0.5)  # Above regular floor tiles but below everything else
+            self.scene.addItem(texture_item)
     
     def _draw_obstacles(self):
-        """Draw obstacles on the grid"""
+        """Draw obstacles on the grid (excluding monsters - they have animated sprites)"""
         import os
         from PySide6.QtGui import QPixmap
         from PySide6.QtWidgets import QGraphicsPixmapItem
@@ -234,9 +381,8 @@ class GridBoardView(QGraphicsView):
         tile_size = self.grid_map.tile_size
         assets_dir = os.path.join(os.path.dirname(__file__), "..", "assets")
         
-        # Load obstacle sprites
+        # Load obstacle sprites (excluding MONSTER - handled by _draw_monsters)
         obstacle_sprites = {
-            ObstacleType.MONSTER: QPixmap(os.path.join(assets_dir, "monster.png")),
             ObstacleType.DOOR_LOCKED: QPixmap(os.path.join(assets_dir, "door_locked.png")),
             ObstacleType.CHEST: QPixmap(os.path.join(assets_dir, "chest.png")),
         }
@@ -253,6 +399,10 @@ class GridBoardView(QGraphicsView):
         # Draw each obstacle
         for obstacle in self.grid_map.obstacle_manager.get_all_obstacles():
             if not obstacle.is_active:
+                continue
+            
+            # SKIP MONSTERS - they are drawn as animated sprites by _draw_monsters()
+            if obstacle.obstacle_type == ObstacleType.MONSTER:
                 continue
             
             x, y = obstacle.position
@@ -341,14 +491,15 @@ class GridBoardView(QGraphicsView):
 
     
     def _draw_monsters(self, into=None):
-        """Draw active monsters from MonsterSystem
+        """Draw active monsters from MonsterSystem with animated Goblin sprites
         
         Args:
             into: Optional QGraphicsItemGroup or scene to add items to
         """
         import os
+        import random
         from PySide6.QtWidgets import QGraphicsItemGroup
-        from PySide6.QtGui import QPixmap
+        from .goblin_sprite import GoblinSprite
         
         into = into or self.scene  # Default to scene if not specified
         
@@ -360,44 +511,70 @@ class GridBoardView(QGraphicsView):
             return
         
         tile_size = self.grid_map.tile_size
-        assets_dir = os.path.join(os.path.dirname(__file__), "..", "assets")
         
-        # Load monster sprite (generic for now)
-        monster_pixmap = QPixmap(os.path.join(assets_dir, "monster.png"))
-        if not monster_pixmap.isNull():
-            monster_pixmap = monster_pixmap.scaled(
-                tile_size, tile_size,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
         
         # Draw each active monster
         for vertex_id, monster_state in self.game_state.monster_system.active_monsters.items():
             if not monster_state.monster.is_alive():
+                # Remove dead monster sprite
+                if vertex_id in self.monster_sprites:
+                    sprite = self.monster_sprites[vertex_id]
+                    if sprite.scene():
+                        sprite.scene().removeItem(sprite)
+                    del self.monster_sprites[vertex_id]
                 continue
             
-            # Get grid position from vertex
-            grid_pos = self.grid_map.get_position_for_vertex(vertex_id)
-            if not grid_pos:
+            # Get chamber bounds for this vertex
+            chamber_info = self.grid_map.chambers.get(vertex_id)
+            if not chamber_info:
                 continue
             
-            x, y = grid_pos
-            px = x * tile_size
-            py = y * tile_size
+            # Get chamber center
+            center_x, center_y = chamber_info['center']
             
-            # Create monster sprite
-            if not monster_pixmap.isNull():
-                from PySide6.QtWidgets import QGraphicsPixmapItem
-                monster_item = QGraphicsPixmapItem(monster_pixmap)
-                monster_item.setPos(px, py)
-                monster_item.setZValue(4)
+            # NO PATROL - Monsters stay at exact center of chamber
+            # Calculate pixel position (no offset, perfectly centered)
+            px = center_x * tile_size + tile_size // 2
+            py = center_y * tile_size + tile_size // 2
+            
+            # Determine walking direction based on vertex ID (just for animation variety)
+            walk_direction = 1 if vertex_id % 2 == 0 else -1  # 1 = right, -1 = left
+            
+            # Reuse existing sprite or create new one
+            if vertex_id in self.monster_sprites:
+                goblin_sprite = self.monster_sprites[vertex_id]
+                # Sprite already exists and is in scene, just update position
+            else:
+                # Create animated Goblin sprite (only once!)
+                goblin_sprite = GoblinSprite()
+                goblin_sprite.setZValue(4)
                 
                 # Add to group or scene
                 if isinstance(into, QGraphicsItemGroup):
-                    into.addToGroup(monster_item)
+                    into.addToGroup(goblin_sprite)
                 else:
-                    into.addItem(monster_item)
+                    into.addItem(goblin_sprite)
+                
+                # Store reference for updates
+                self.monster_sprites[vertex_id] = goblin_sprite
+            
+            # Update position (centered in chamber)
+            sprite_x = px - 30  # Offset to center sprite
+            sprite_y = py - 30
+            goblin_sprite.setPos(sprite_x, sprite_y)
+            
+            # Update HP bar with monster's current health
+            if hasattr(monster_state.monster, 'hp') and hasattr(monster_state.monster, 'max_hp'):
+                goblin_sprite.update_hp(monster_state.monster.hp, monster_state.monster.max_hp)
+            
+            # Set walking direction based on vertex ID (just for animation variety)
+            if walk_direction > 0:
+                goblin_sprite.walk_right()
             else:
+                goblin_sprite.walk_left()
+        
+        # Fallback for any remaining logic
+        if False:
                 # Fallback: red rectangle
                 monster_rect = QGraphicsRectItem(px + 10, py + 10, tile_size - 20, tile_size - 20)
                 monster_rect.setBrush(QBrush(QColor("#8B0000")))
@@ -411,18 +588,53 @@ class GridBoardView(QGraphicsView):
                     into.addItem(monster_rect)
     
     def _draw_treasure(self):
-        """Draw treasure marker"""
+        """Draw treasure marker with glow effect covering entire chamber"""
         treasure_vertex = self.game_state.treasure_vertex_id
-        grid_pos = self.grid_map.get_position_for_vertex(treasure_vertex)
         
-        if grid_pos:
-            x, y = grid_pos
+        # Get chamber info for the treasure vertex
+        chamber_info = self.grid_map.chambers.get(treasure_vertex)
+        
+        if chamber_info:
             tile_size = self.grid_map.tile_size
-            px = x * tile_size + tile_size // 2
-            py = y * tile_size + tile_size // 2
             
-            # Draw treasure icon
-            treasure = QGraphicsEllipseItem(px - 8, py - 8, 16, 16)
+            # Get chamber bounds (x1, y1, x2, y2)
+            x1, y1, x2, y2 = chamber_info['bounds']
+            
+            # Chamber is 2x2 tiles
+            chamber_pixel_size = tile_size * 2
+            px = x1 * tile_size
+            py = y1 * tile_size
+            
+            # Load and draw treasure glow image covering entire chamber
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            glow_path = os.path.join(base_dir, "assets", "treasure_glow.png")
+            
+            if os.path.exists(glow_path):
+                from PySide6.QtGui import QPixmap
+                from PySide6.QtWidgets import QGraphicsPixmapItem
+                
+                glow_pixmap = QPixmap(glow_path)
+                if not glow_pixmap.isNull():
+                    # Scale image to fit entire chamber (2x2 tiles)
+                    scaled_pixmap = glow_pixmap.scaled(
+                        chamber_pixel_size, 
+                        chamber_pixel_size,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    
+                    glow_item = QGraphicsPixmapItem(scaled_pixmap)
+                    glow_item.setPos(px, py)
+                    glow_item.setZValue(2.5)  # Below monsters/players but above floor
+                    self.scene.addItem(glow_item)
+            
+            # Draw small golden treasure icon at center
+            center_x, center_y = chamber_info['center']
+            center_px = center_x * tile_size + tile_size // 2
+            center_py = center_y * tile_size + tile_size // 2
+            
+            treasure = QGraphicsEllipseItem(center_px - 8, center_py - 8, 16, 16)
             treasure.setBrush(QBrush(QColor("#FFD700")))
             treasure.setPen(QPen(QColor("#FFA500"), 2))
             treasure.setZValue(3)
@@ -491,10 +703,15 @@ class GridBoardView(QGraphicsView):
                 if hasattr(item, 'timer'):
                     item.timer.stop()
             
-            # Remove all children from monster group
+            # Remove all children from monster group (but keep monster sprites alive)
+            monster_sprites_to_keep = set(self.monster_sprites.values())
             for item in list(self._dyn_monsters.childItems()):
-                self._dyn_monsters.removeFromGroup(item)
-                self.scene.removeItem(item)
+                if item not in monster_sprites_to_keep:
+                    self._dyn_monsters.removeFromGroup(item)
+                    self.scene.removeItem(item)
+                else:
+                    # Just remove from group, don't delete
+                    self._dyn_monsters.removeFromGroup(item)
             
             # Remove all children from fog group
             for item in list(self._dyn_fog.childItems()):
@@ -503,6 +720,9 @@ class GridBoardView(QGraphicsView):
             
             # Clear player sprites tracking (will be rebuilt)
             self.player_sprites.clear()
+            
+            # DON'T clear monster sprites - they persist and get reused
+            # self.monster_sprites.clear()  # REMOVED
             
             # Redraw dynamic elements into their respective groups
             self._draw_players(into=self._dyn_players)
@@ -574,6 +794,12 @@ class GridBoardView(QGraphicsView):
                 # Offset slightly for player vs monster
                 if target_type == "monster":
                     x += 0.3 # Shift right for monster damage
+                    # Update monster HP bar
+                    if hasattr(self.game_state, 'monster_system'):
+                        monster_state = self.game_state.monster_system.active_monsters.get(vertex_id)
+                        if monster_state and vertex_id in self.monster_sprites:
+                            goblin_sprite = self.monster_sprites[vertex_id]
+                            goblin_sprite.update_hp(monster_state.monster.hp, monster_state.monster.max_hp)
                     # Trigger shake animation for monster (if we can identify sprite)
                     # For now, just shake the popup slightly
                 else:
@@ -608,9 +834,26 @@ class GridBoardView(QGraphicsView):
         jitter()
 
     def _on_monster_move(self, ms, old_v, new_v):
-        """Callback when a monster moves"""
+        """Callback when a monster moves - updates Goblin animation direction"""
+        # Get grid positions
+        old_pos = self.grid_map.get_position_for_vertex(old_v)
+        new_pos = self.grid_map.get_position_for_vertex(new_v)
+        
+        if old_pos and new_pos:
+            # Determine movement direction
+            dx = new_pos[0] - old_pos[0]
+            
+            # Update sprite animation direction if it exists
+            if old_v in self.monster_sprites:
+                goblin_sprite = self.monster_sprites[old_v]
+                
+                # Change animation based on horizontal movement
+                if dx > 0:  # Moving right
+                    goblin_sprite.walk_right()
+                elif dx < 0:  # Moving left
+                    goblin_sprite.walk_left()
+        
         # Trigger refresh of dynamic layers to show new position
-        # We could optimize to only move the specific sprite, but full refresh is safer for now
         self._refresh_dynamic_layers()
     
     def _on_unit_death(self, unit, unit_type):
@@ -619,16 +862,43 @@ class GridBoardView(QGraphicsView):
         
         # Determine position
         x, y = 0, 0
+        vertex_id = None
+        
         if unit_type == "player":
             grid_pos = self.grid_map.get_player_position(unit.id)
             if grid_pos: x, y = grid_pos
         else:
-            # Monster
-            if hasattr(unit, 'grid_pos') and unit.grid_pos:
+            # Monster - find the MonsterState that contains this monster
+            if hasattr(self.game_state, 'monster_system'):
+                for v_id, monster_state in self.game_state.monster_system.active_monsters.items():
+                    if monster_state.monster == unit:
+                        vertex_id = v_id
+                        
+                        # Play death animation on the Goblin sprite
+                        if vertex_id in self.monster_sprites:
+                            goblin_sprite = self.monster_sprites[vertex_id]
+                            goblin_sprite.die()
+                            
+                            # Remove sprite after death animation completes
+                            def remove_goblin():
+                                try:
+                                    if goblin_sprite.scene():
+                                        self.scene.removeItem(goblin_sprite)
+                                    if vertex_id in self.monster_sprites:
+                                        del self.monster_sprites[vertex_id]
+                                except RuntimeError:
+                                    pass
+                            
+                            # Death animation is 4 frames * 200ms = 800ms
+                            QTimer.singleShot(900, remove_goblin)
+                        
+                        grid_pos = self.grid_map.get_position_for_vertex(vertex_id)
+                        if grid_pos: x, y = grid_pos
+                        break
+            
+            # Fallback if not found in monster system
+            if vertex_id is None and hasattr(unit, 'grid_pos') and unit.grid_pos:
                 x, y = unit.grid_pos
-            else:
-                # Try to find via active monsters if needed, but grid_pos should be set for static ones
-                pass
 
         # Show skull effect
         tile_size = self.grid_map.tile_size
@@ -655,8 +925,9 @@ class GridBoardView(QGraphicsView):
                 pass
         QTimer.singleShot(1500, cleanup)
         
-        # Refresh board to remove the unit sprite
-        self._refresh_dynamic_layers()
+        # Refresh board to remove the unit sprite (only if not monster with death animation)
+        if unit_type != "monster":
+            self._refresh_dynamic_layers()
 
     def keyPressEvent(self, event: QKeyEvent):
         """Handle keyboard input for movement - separate controls per player"""
@@ -779,11 +1050,23 @@ class GridBoardView(QGraphicsView):
         if vertex_id is not None:
             # Update game state
             player.current_vertex_id = vertex_id
+            
+            # Check if there's a monster at this vertex
+            if hasattr(self.game_state, 'monster_system'):
+                monster_state = self.game_state.monster_system.active_monsters.get(vertex_id)
+                if monster_state and monster_state.monster.is_alive():
+                    # Player encountered a monster - show interaction dialog
+                    self.show_monster_interaction_dialog(monster_state, player)
+                    return  # Don't continue with normal vertex entry
+            
             self.game_state.enter_vertex(player, vertex_id)
             self.game_state.check_victory()
         
         print(f"🚶 {player.name} moveu de {old_pos} para ({new_x}, {new_y}) [direção: {direction}] - Stamina: -{stamina_cost}")
         self.game_state.log(f"🚶 {player.name} moveu para ({new_x}, {new_y}) - Stamina: -{stamina_cost}")
+        
+        # Center camera on player after movement
+        self.center_on_current_player()
         
         # Animate movement if sprite exists
         if player_id in self.player_sprites:
@@ -870,6 +1153,150 @@ class GridBoardView(QGraphicsView):
         if result == QDialog.Accepted:
             action = dialog.get_selected_action()
             self.handle_interaction_action(action, obstacle, player)
+    
+    def show_monster_interaction_dialog(self, monster_state, player):
+        """Show interaction dialog when player encounters a monster"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGridLayout
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QFont
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("⚔️ Encontro com Monstro!")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(500)
+        dialog.setMinimumHeight(400)
+        
+        layout = QVBoxLayout()
+        
+        # Title
+        monster = monster_state.monster
+        title_label = QLabel(f"👹 {monster.monster_type.value.title()} Lv{monster.level} bloqueando o caminho!")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_font = QFont()
+        title_font.setPointSize(16)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
+        
+        # Monster stats
+        stats_layout = QGridLayout()
+        stats_layout.addWidget(QLabel("❤️ HP:"), 0, 0)
+        stats_layout.addWidget(QLabel(f"{monster.hp}/{monster.max_hp}"), 0, 1)
+        stats_layout.addWidget(QLabel("⚔️ Ataque:"), 1, 0)
+        stats_layout.addWidget(QLabel(str(monster.attack)), 1, 1)
+        stats_layout.addWidget(QLabel("🛡️ Defesa:"), 2, 0)
+        stats_layout.addWidget(QLabel(str(monster.defense)), 2, 1)
+        stats_layout.addWidget(QLabel("⚡ Velocidade:"), 3, 0)
+        stats_layout.addWidget(QLabel(str(monster.speed)), 3, 1)
+        layout.addLayout(stats_layout)
+        
+        layout.addSpacing(20)
+        
+        # Player stats
+        player_label = QLabel(f"📊 {player.name}")
+        player_font = QFont()
+        player_font.setPointSize(12)
+        player_font.setBold(True)
+        player_label.setFont(player_font)
+        layout.addWidget(player_label)
+        
+        player_stats_layout = QGridLayout()
+        player_stats_layout.addWidget(QLabel("❤️ HP:"), 0, 0)
+        player_stats_layout.addWidget(QLabel(f"{player.hp}/{player.max_hp}"), 0, 1)
+        player_stats_layout.addWidget(QLabel("⚔️ Ataque:"), 1, 0)
+        player_stats_layout.addWidget(QLabel(str(player.attack)), 1, 1)
+        player_stats_layout.addWidget(QLabel("🛡️ Defesa:"), 2, 0)
+        player_stats_layout.addWidget(QLabel(str(player.defense)), 2, 1)
+        player_stats_layout.addWidget(QLabel("💧 Stamina:"), 3, 0)
+        player_stats_layout.addWidget(QLabel(f"{player.stamina}/{player.max_stamina}"), 3, 1)
+        layout.addLayout(player_stats_layout)
+        
+        layout.addSpacing(20)
+        
+        # Action buttons
+        actions_label = QLabel("O que você deseja fazer?")
+        actions_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(actions_label)
+        
+        buttons_layout = QVBoxLayout()
+        
+        # Combat button
+        combat_btn = QPushButton("⚔️ Iniciar Combate")
+        combat_btn.setMinimumHeight(40)
+        combat_btn.clicked.connect(lambda: self._handle_monster_action("combat", dialog, monster_state, player))
+        buttons_layout.addWidget(combat_btn)
+        
+        # Inventory button
+        inventory_btn = QPushButton("🎒 Ver Inventário")
+        inventory_btn.setMinimumHeight(40)
+        inventory_btn.clicked.connect(lambda: self._handle_monster_action("inventory", dialog, monster_state, player))
+        buttons_layout.addWidget(inventory_btn)
+        
+        # Cards button
+        cards_btn = QPushButton(f"🎴 Usar Carta ({len(player.hand_cards)} cartas)")
+        cards_btn.setMinimumHeight(40)
+        cards_btn.clicked.connect(lambda: self._handle_monster_action("cards", dialog, monster_state, player))
+        buttons_layout.addWidget(cards_btn)
+        
+        # Flee button
+        flee_btn = QPushButton("🏃 Tentar Fugir")
+        flee_btn.setMinimumHeight(40)
+        flee_btn.clicked.connect(lambda: self._handle_monster_action("flee", dialog, monster_state, player))
+        buttons_layout.addWidget(flee_btn)
+        
+        layout.addLayout(buttons_layout)
+        dialog.setLayout(layout)
+        dialog.exec()
+    
+    def _handle_monster_action(self, action, dialog, monster_state, player):
+        """Handle monster interaction action"""
+        if action == "combat":
+            # Start combat
+            self.game_state.log(f"⚔️ {player.name} iniciou combate contra {monster_state.monster.monster_type.value.title()}!")
+            dialog.accept()
+            
+            # Start combat via CombatManager
+            vertex = self.game_state.graph.vertices[monster_state.vertex_id]
+            self.game_state.start_combat(player, monster_state.monster)
+            
+            # Refresh UI
+            if self.main_window:
+                self.main_window.refresh_all()
+        
+        elif action == "inventory":
+            # Show inventory
+            self.game_state.log(f"🎒 {player.name} abriu o inventário")
+            dialog.accept()
+            # TODO: Implement inventory dialog
+            if self.main_window:
+                self.main_window.refresh_all()
+        
+        elif action == "cards":
+            # Show cards
+            self.game_state.log(f"🎴 {player.name} está escolhendo uma carta...")
+            dialog.accept()
+            # TODO: Implement card selection dialog
+            if self.main_window:
+                self.main_window.refresh_all()
+        
+        elif action == "flee":
+            # Try to flee
+            from core.combat import CombatSystem
+            fled = CombatSystem.check_flee(player.speed, monster_state.monster.speed)
+            if fled:
+                self.game_state.log(f"🏃 {player.name} conseguiu fugir!")
+                dialog.accept()
+                # Move player back one tile
+                # TODO: Implement movement back
+            else:
+                self.game_state.log(f"❌ {player.name} não conseguiu fugir!")
+                # Start combat anyway
+                vertex = self.game_state.graph.vertices[monster_state.vertex_id]
+                self.game_state.start_combat(player, monster_state.monster)
+                dialog.accept()
+            
+            if self.main_window:
+                self.main_window.refresh_all()
     
     def handle_interaction_action(self, action, obstacle, player):
         """Handle the selected interaction action"""

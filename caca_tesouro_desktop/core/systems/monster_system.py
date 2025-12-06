@@ -36,14 +36,13 @@ class MonsterSystem:
     """Manage active monsters: patrol, detect, chase and trigger combat"""
     def __init__(self, game_state):
         self.gs = game_state
-        self.graph: Graph = game_state.graph
         # active_monsters: vertex_id -> MonsterState
         self.active_monsters: Dict[int, MonsterState] = {}
         self.on_monster_move = None # Callback(monster_state, old_vertex, new_vertex)
 
     def spawn_from_graph(self):
         """Convert graph flags into active_monsters (idempotent)"""
-        for v_id, vertex in self.graph.vertices.items():
+        for v_id, vertex in self.gs.graph.vertices.items():
             if vertex.has_monster and v_id not in self.active_monsters:
                 # Create Monster instance from vertex.monster_type
                 mtype_str = vertex.monster_type
@@ -55,7 +54,7 @@ class MonsterSystem:
                     mtype = MonsterType.GOBLIN
                 monster = Monster(mtype, level=1)
                 # Optionally assign simple 2-point patrol around vertex (neighbors)
-                neighbors = [n for n, e in self.graph.neighbors(v_id)]
+                neighbors = [n for n, e in self.gs.graph.neighbors(v_id)]
                 patrol_points = [v_id] + (neighbors[:1] if neighbors else [])
                 ms = MonsterState(monster, v_id, patrol_points=patrol_points)
                 ms.state = "patrol" if len(ms.patrol_points) > 1 else "idle"
@@ -63,7 +62,7 @@ class MonsterSystem:
                 # ensure vertex is treated as having an active monster
                 vertex.has_monster = True
         # remove stale monsters for vertices that lost flag
-        stale = [v for v in self.active_monsters if not self.graph.vertices[v].has_monster]
+        stale = [v for v in self.active_monsters if not self.gs.graph.vertices[v].has_monster]
         for v in stale:
             del self.active_monsters[v]
 
@@ -83,65 +82,79 @@ class MonsterSystem:
             # if random.random() < 0.01:
             #    print(f"[DEBUG] Monster {ms.monster} at v{ms.vertex_id} state={ms.state}")
 
-            # --- CHASE MODE ---
-            if ms.state == "chase" and ms.aggro_target is not None:
-                player = self.gs._get_player(ms.aggro_target)
-
-                if not player or not player.is_alive:
-                    ms.state = "patrol" if len(ms.patrol_points) > 1 else "idle"
-                    ms.aggro_target = None
-                    continue
-
-                # Only pathfind if cooldown completed
-                if ms.time_since_last_move >= ms.move_cooldown:
-                    ms.time_since_last_move = 0.0
-
-                    # Lightweight chase: walk to neighbor closer to player
-                    next_v = self._pick_best_neighbor(ms.vertex_id, player.current_vertex_id)
-
-                    if next_v is not None and next_v != ms.vertex_id:
-                        self._move_monster(ms, next_v)
-
-                    # Reached player
-                    if ms.vertex_id == player.current_vertex_id:
-                        # Only trigger combat once per engagement
-                        if ms.state != "engaging" and not ms.engaging:
-                            ms.state = "engaging"
-                            ms.engaging = True
-                            ms.engaging_since = 0.0
-                            self.gs.log(f"⚠️ {ms.monster.monster_type.value.title()} iniciou combate com {player.name}!")
-                            self.gs.trigger_combat(player, self.graph.vertices[ms.vertex_id])
-
-                continue
-
-            # --- PATROL / IDLE ---
-            detected = self._detect_player_in_range(ms)
-            if detected:
-                ms.aggro_target = detected.id
-                ms.state = "chase"
-                self.gs.log(f"👀 {ms.monster.monster_type.value.title()} detectou {detected.name}!")
-                continue
-
-            # Patrol only if >1 point
-            if ms.state == "patrol" and len(ms.patrol_points) > 1:
-                if ms.time_since_last_move >= ms.move_cooldown:
-                    ms.time_since_last_move = 0.0
-                    next_v = self._next_patrol_point(ms)
-                    self._move_monster(ms, next_v)
+            # --- CHASE MODE --- DISABLED: Monsters stay in their chambers
+            # if ms.state == "chase" and ms.aggro_target is not None:
+            #     player = self.gs._get_player(ms.aggro_target)
+            #
+            #     if not player or not player.is_alive:
+            #         ms.state = "patrol" if len(ms.patrol_points) > 1 else "idle"
+            #         ms.aggro_target = None
+            #         continue
+            #
+            #     # Only pathfind if cooldown completed
+            #     if ms.time_since_last_move >= ms.move_cooldown:
+            #         ms.time_since_last_move = 0.0
+            #
+            #         # Lightweight chase: walk to neighbor closer to player
+            #         next_v = self._pick_best_neighbor(ms.vertex_id, player.current_vertex_id)
+            #
+            #         if next_v is not None and next_v != ms.vertex_id:
+            #             self._move_monster(ms, next_v)
+            #
+            #         # Reached player - DON'T auto-trigger combat anymore
+            #         # Let the UI handle interaction dialog
+            #         if ms.vertex_id == player.current_vertex_id:
+            #             # Switch to idle/patrol state to stop chasing
+            #             ms.state = "idle"
+            #             ms.aggro_target = None
+            #             # Note: UI will show interaction dialog when player enters chamber
+            
+            # --- MONSTERS COMPLETELY DISABLED ---
+            # Monsters stay in spawn positions, no detection, no movement
+            
+            # Force idle state
+            if ms.state != "idle":
+                ms.state = "idle"
+                ms.aggro_target = None
+            
+            # Skip all detection and movement logic
+            continue
+            
+            # # OLD CODE - DISABLED
+            # # Monsters stay in place - only detect players but don't move
+            # if ms.state == "chase":
+            #     ms.state = "idle"  # Cancel chase immediately
+            #     ms.aggro_target = None
+            #     continue
+            #
+            # # --- PATROL / IDLE ---
+            # detected = self._detect_player_in_range(ms)
+            # if detected:
+            #     ms.aggro_target = detected.id
+            #     ms.state = "chase"
+            #     self.gs.log(f"👀 {ms.monster.monster_type.value.title()} detectou {detected.name}!")
+            #     continue
+            #
+            # # Patrol only if >1 point
+            # if ms.state == "patrol" and len(ms.patrol_points) > 1:
+            #     if ms.time_since_last_move >= ms.move_cooldown:
+            #         ms.time_since_last_move = 0.0
+            #         next_v = self._next_patrol_point(ms)
+            #         self._move_monster(ms, next_v)
 
     def _move_monster(self, ms: MonsterState, new_vertex_id: int):
         """Safely move monster between vertices."""
         # Remove old marker
         old = ms.vertex_id
-        self.graph.vertices[old].has_monster = False
-        self.graph.vertices[old].monster_type = None
+        self.gs.graph.vertices[old].has_monster = False
+        self.gs.graph.vertices[old].monster_type = None
 
         # Update state
         ms.vertex_id = new_vertex_id
 
         # Set new marker
-        self.graph.vertices[new_vertex_id].has_monster = True
-        self.graph.vertices[new_vertex_id].monster_type = ms.monster.monster_type.value
+        self.gs.graph.vertices[new_vertex_id].has_monster = True
+        self.gs.graph.vertices[new_vertex_id].monster_type = ms.monster.monster_type.value
         
         # Notify UI
         if self.on_monster_move:
@@ -155,9 +168,9 @@ class MonsterSystem:
         # Precompute distances via a single Dijkstra (rare)
         try:
             from ..algorithms import dijkstra
-            dist, _ = dijkstra(self.graph, from_v, target_v)
+            dist, _ = dijkstra(self.gs.graph, from_v, target_v)
             
-            for nb, _ in self.graph.neighbors(from_v):
+            for nb, _ in self.gs.graph.neighbors(from_v):
                 d = dist.get(nb, 9999)
                 if d < best_dist:
                     best_dist = d
@@ -168,7 +181,7 @@ class MonsterSystem:
             print(f"[DEBUG] Dijkstra failed for v{from_v}->v{target_v}, using heuristic fallback: {e}")
             
             # Simple heuristic: pick any valid neighbor (patrol-like behavior when pathfinding fails)
-            neighbors = [n for n, _ in self.graph.neighbors(from_v)]
+            neighbors = [n for n, _ in self.gs.graph.neighbors(from_v)]
             if neighbors:
                 # Prefer neighbors that haven't been visited recently (would need tracking)
                 # For now, just pick the first valid neighbor
@@ -198,7 +211,7 @@ class MonsterSystem:
                 continue
             try:
                 from ..algorithms import dijkstra
-                distances, _ = dijkstra(self.graph, ms.vertex_id, player.current_vertex_id)
+                distances, _ = dijkstra(self.gs.graph, ms.vertex_id, player.current_vertex_id)
                 if distances.get(player.current_vertex_id, float('inf')) <= ms.vision_range:
                     return player
             except Exception:
@@ -216,9 +229,9 @@ class MonsterSystem:
         if v in self.active_monsters:
             del self.active_monsters[v]
         # ensure graph flags cleared
-        if v in self.graph.vertices:
-            self.graph.vertices[v].has_monster = False
-            self.graph.vertices[v].monster_type = None
+        if v in self.gs.graph.vertices:
+            self.gs.graph.vertices[v].has_monster = False
+            self.gs.graph.vertices[v].monster_type = None
         # spawn loot via game_state
         # NOTE: GameState.trigger_combat already handles removing vertex monster and spawning loot
 
