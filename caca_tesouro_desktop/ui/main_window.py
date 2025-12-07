@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QScrollArea
 from PySide6.QtCore import Qt
 from .grid_board_view import GridBoardView  # Changed from BoardView
 from .side_panel import SidePanel
@@ -45,9 +45,32 @@ class MainWindow(QMainWindow):
         self.board_view.main_window = self
         top_layout.addWidget(self.board_view, stretch=7)
         
-        # SidePanel (30% da largura)
-        self.side_panel = SidePanel(game_state, self)
-        top_layout.addWidget(self.side_panel, stretch=3)
+        # SidePanel Area (30% da largura) - DIVIDED VERTICALLY IN SCROLL AREA
+        
+        # Container widget for side panels
+        side_container = QWidget()
+        side_layout = QVBoxLayout(side_container)
+        side_layout.setSpacing(10)
+        side_layout.setContentsMargins(0, 0, 0, 0) # Tight margins
+        
+        # Player 1 Panel (Red)
+        p1 = game_state.players[0] if len(game_state.players) > 0 else None
+        self.side_panel_p1 = SidePanel(game_state, self, p1)
+        side_layout.addWidget(self.side_panel_p1)
+        
+        # Player 2 Panel (Blue)
+        p2 = game_state.players[1] if len(game_state.players) > 1 else None
+        self.side_panel_p2 = SidePanel(game_state, self, p2)
+        side_layout.addWidget(self.side_panel_p2)
+        
+        # Scroll Area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(side_container)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        # Add scroll area to top layout
+        top_layout.addWidget(scroll_area, stretch=3)
         
         main_layout.addLayout(top_layout, stretch=1)
         
@@ -100,5 +123,6 @@ class MainWindow(QMainWindow):
     def refresh_all(self):
         """Atualizar todos os componentes da interface"""
         self.board_view.refresh()
-        self.side_panel.refresh()
+        if hasattr(self, 'side_panel_p1'): self.side_panel_p1.refresh()
+        if hasattr(self, 'side_panel_p2'): self.side_panel_p2.refresh()
         self.bottom_bar.refresh()

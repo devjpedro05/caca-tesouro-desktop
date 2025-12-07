@@ -48,13 +48,14 @@ class GridBoardView(QGraphicsView):
         # Animation
         self.is_animating = False
         self.current_animation = None
+        self.victory_animation_played = False
         
         self.main_window = None
         
         # Key state tracking for continuous movement
         self.pressed_keys = set()  # Track currently pressed keys
         self.movement_cooldown = 0.0  # Cooldown between movements (seconds)
-        self.movement_delay = 0.15  # Delay between movements (150ms)
+        self.movement_delay = 0.05  # Delay between movements (50ms for faster gameplay)
         
         # Enable keyboard focus
         self.setFocusPolicy(Qt.StrongFocus)
@@ -134,6 +135,10 @@ class GridBoardView(QGraphicsView):
 
         # Update Goblin patrol positions
         self._update_goblin_patrol(delta)
+
+        # Check for victory animation
+        if self.game_state.game_mode.name == "VICTORY" and not self.victory_animation_played:
+            self.play_victory_animation()
 
         # Update core game logic: monsters, combat, cooldowns
         try:
@@ -1066,8 +1071,8 @@ class GridBoardView(QGraphicsView):
             self.game_state.enter_vertex(player, vertex_id)
             self.game_state.check_victory()
         
-        print(f"🚶 {player.name} moveu de {old_pos} para ({new_x}, {new_y}) [direção: {direction}] - Stamina: -{stamina_cost}")
-        self.game_state.log(f"🚶 {player.name} moveu para ({new_x}, {new_y}) - Stamina: -{stamina_cost}")
+        # print(f"🚶 {player.name} moveu de {old_pos} para ({new_x}, {new_y}) [direção: {direction}] - Stamina: -{stamina_cost}")
+        # self.game_state.log(f"🚶 {player.name} moveu para ({new_x}, {new_y}) - Stamina: -{stamina_cost}")
         
         # Center camera on player after movement
         self.center_on_current_player()
@@ -1115,10 +1120,10 @@ class GridBoardView(QGraphicsView):
         from PySide6.QtCore import QVariantAnimation
         
         animation = QVariantAnimation()
-        animation.setDuration(200)  # 200ms for smooth movement
+        animation.setDuration(100)  # 100ms for snappier movement
         animation.setStartValue(start_pos)
         animation.setEndValue(end_pos)
-        animation.setEasingCurve(QEasingCurve.OutCubic)
+        animation.setEasingCurve(QEasingCurve.Linear)  # Linear for continuous feeling
         
         # Update sprite position on each animation step
         def update_position(value):
@@ -1285,7 +1290,6 @@ class GridBoardView(QGraphicsView):
             dialog.accept()
             
             # Start combat via CombatManager
-            vertex = self.game_state.graph.vertices[monster_state.vertex_id]
             self.game_state.start_combat(player, monster_state.monster)
             
             # Refresh UI
@@ -1295,34 +1299,34 @@ class GridBoardView(QGraphicsView):
         elif action == "inventory":
             # Show inventory
             self.game_state.log(f"🎒 {player.name} abriu o inventário")
-            dialog.accept()
-            # TODO: Implement inventory dialog
+            from .inventory_dialog import InventoryDialog
+            inv_dialog = InventoryDialog(player, self)
+            inv_dialog.exec()
+            # Don't close main dialog, let user decide action after checking inventory?
+            # User requirement: "Ver inventário deve abrir uma nova aba... apenas implemente o que for necessário"
+            # keeping functionality user-friendly. Returning to main dialog might be best, but exec() blocks.
+            # So main dialog stays open behind it? No, setModal(True) blocks interaction with parent.
+            # Simple solution: Just open and close inventory, main dialog remains open? 
+            # Or accept main dialog? No, user might want to check inventory then fight.
+            # `dialog` is the Interaction Dialog. I won't call `dialog.accept()` here so it stays open.
+            
             if self.main_window:
                 self.main_window.refresh_all()
         
         elif action == "cards":
             # Show cards
-            self.game_state.log(f"🎴 {player.name} está escolhendo uma carta...")
-            dialog.accept()
-            # TODO: Implement card selection dialog
+            self.game_state.log(f"🎴 {player.name} está analisando suas cartas...")
+            from .cards_dialog import CardsDialog
+            cards_dialog = CardsDialog(player, self.game_state, self)
+            cards_dialog.exec()
+            
             if self.main_window:
                 self.main_window.refresh_all()
         
         elif action == "flee":
-            # Try to flee
-            from core.combat import CombatSystem
-            fled = CombatSystem.check_flee(player.speed, monster_state.monster.speed)
-            if fled:
-                self.game_state.log(f"🏃 {player.name} conseguiu fugir!")
-                dialog.accept()
-                # Move player back one tile
-                # TODO: Implement movement back
-            else:
-                self.game_state.log(f"❌ {player.name} não conseguiu fugir!")
-                # Start combat anyway
-                vertex = self.game_state.graph.vertices[monster_state.vertex_id]
-                self.game_state.start_combat(player, monster_state.monster)
-                dialog.accept()
+            # "Tentar fugir" que deve apenas fechar a aba de opções, permitindo a continuidade do jogo.
+            self.game_state.log(f"🏃 {player.name} decidiu ignorar o monstro por enquanto.")
+            dialog.reject() # Close the dialog
             
             if self.main_window:
                 self.main_window.refresh_all()
@@ -1378,4 +1382,71 @@ class GridBoardView(QGraphicsView):
         # Refresh UI
         if self.main_window:
             self.main_window.refresh_all()
+
+    def play_victory_animation(self):
+        """Play victory animation: golden light burst from treasure chest"""
+        self.victory_animation_played = True
+        
+        vertex_id = self.game_state.treasure_vertex_id
+        if vertex_id is None:
+            return
+            
+        chamber_info = self.grid_map.chambers.get(vertex_id)
+        if not chamber_info:
+            return
+            
+        center_x, center_y = chamber_info['center']
+        tile_size = self.grid_map.tile_size
+        px = center_x * tile_size + tile_size // 2
+        py = center_y * tile_size + tile_size // 2
+        
+        # Create light burst item
+        from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsSimpleTextItem
+        from PySide6.QtGui import QRadialGradient, QBrush, QColor, QFont
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPointF, QVariantAnimation
+        from PySide6.QtCore import Qt
+        
+        # Large yellow circle with gradient
+        radius = 10
+        light = QGraphicsEllipseItem(-radius, -radius, radius*2, radius*2)
+        light.setPos(px, py)
+        light.setZValue(20) # Topmost
+        
+        gradient = QRadialGradient(0, 0, radius)
+        gradient.setColorAt(0, QColor(255, 255, 200, 255)) # White-yellow center
+        gradient.setColorAt(0.5, QColor(255, 215, 0, 200)) # Gold middle
+        gradient.setColorAt(1, QColor(255, 140, 0, 0))     # Transparent orange edge
+        light.setBrush(QBrush(gradient))
+        light.setPen(Qt.NoPen)
+        
+        self.scene.addItem(light)
+        
+        # 1. Expand Animation
+        expand = QVariantAnimation(self)
+        expand.setDuration(2000)
+        expand.setStartValue(1.0)
+        expand.setEndValue(30.0) # Expand 30x
+        expand.setEasingCurve(QEasingCurve.OutExpo)
+        
+        def update_scale(s):
+            light.setTransform(light.transform().fromScale(s, s))
+            
+        expand.valueChanged.connect(update_scale)
+        expand.start()
+        
+        # 2. Add text
+        text = QGraphicsSimpleTextItem("TESOURO ENCONTRADO!")
+        font = QFont("Arial", 24, QFont.Bold)
+        text.setFont(font)
+        text.setBrush(QBrush(QColor("white")))
+        
+        # Center text (approx width calculation)
+        text_width = text.boundingRect().width()
+        text.setPos(px - text_width/2, py - 50)
+        text.setZValue(21)
+        self.scene.addItem(text)
+        
+        # Keep references
+        self.victory_anim = expand 
+
 

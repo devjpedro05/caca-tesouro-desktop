@@ -53,6 +53,7 @@ class Player:
         # Resources
         self.stamina = 100
         self.max_stamina = 100
+        self.stamina_regen_rate = 15.0  # Regen per second
         self.action_points = 3  # Actions per turn
         self.max_action_points = 3
         
@@ -86,6 +87,22 @@ class Player:
         self.treasures_found = 0
         self.distance_traveled = 0
         self.cards_played = 0
+    
+    def update(self, delta_time: float):
+        """Real-time update for player state"""
+        if not self.is_alive:
+            return
+            
+        # Regenerate stamina
+        if self.stamina < self.max_stamina:
+            self.stamina = min(self.max_stamina, self.stamina + self.stamina_regen_rate * delta_time)
+            
+        # Update cooldowns / stun (time based)
+        if self.is_stunned:
+            self.turns_stunned -= delta_time # usage of turns_stunned as time counter now
+            if self.turns_stunned <= 0:
+                self.is_stunned = False
+                self.turns_stunned = 0
     
     def take_damage(self, amount: int) -> int:
         """

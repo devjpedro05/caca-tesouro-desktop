@@ -15,13 +15,12 @@ class FrameAnimatedSprite(QGraphicsPixmapItem):
         super().__init__(parent)
         
         self.frames_directory = frames_directory
-        self.frames = {}  # Dictionary: {state: [frame1, frame2, ...]}
+        self.frames = {}  # Dictionary: {state: [pixmap1, pixmap2, ...]}
         self.current_state = "idle_down"
         self.current_frame_index = 0
         
         # Animation settings
-        self.animation_speed = 150  # ms per frame (faster for smoother walking)
-        self.idle_speed = 500  # ms per frame for idle (slower breathing)
+        self.animation_speed = 100  # ms per frame (snappy)
         self.is_animating = True
         
         # Load all frames
@@ -57,83 +56,79 @@ class FrameAnimatedSprite(QGraphicsPixmapItem):
             search_path = os.path.join(self.frames_directory, pattern)
             matching_files = glob.glob(search_path)
             
+            # Sort files to ensure correct frame order (e.g. 1.png, 2.png)
+            matching_files.sort()
+            
             if matching_files:
-                # Load the frame
-                frame_path = matching_files[0]  # Take first match
-                pixmap = QPixmap(frame_path)
-                
-                if not pixmap.isNull():
-                    self.frames[state] = pixmap
-                    # print(f"✅ Loaded {state}: {os.path.basename(frame_path)}")
-                else:
-                    print(f"❌ Failed to load {state}: {frame_path}")
+                self.frames[state] = []
+                for frame_path in matching_files:
+                    pixmap = QPixmap(frame_path)
+                    if not pixmap.isNull():
+                        self.frames[state].append(pixmap)
+                    else:
+                        print(f"❌ Failed to load {state}: {frame_path}")
             else:
-                # print(f"⚠️ No frame found for {state} (pattern: {pattern})")
                 pass
         
-        # print(f"✅ Total frames loaded: {len(self.frames)}")
-        
         # Set initial frame
-        if "idle_down" in self.frames:
-            self.setPixmap(self.frames["idle_down"])
-            # Scale to appropriate size
-            self.setScale(0.08)  # Adjust based on actual frame size
-            # print(f"✅ Set initial frame (idle_down) with scale 0.08")
+        if "idle_down" in self.frames and self.frames["idle_down"]:
+            self.setPixmap(self.frames["idle_down"][0])
+            self.setScale(0.08)
     
     def start_animation(self, state):
         """Start animation for given state"""
-        if state not in self.frames:
-            # print(f"⚠️ State '{state}' not found, using idle_down")
-            state = "idle_down"
-        
+        # Fallback if state has no frames
+        if state not in self.frames or not self.frames[state]:
+            # Try basic fallback
+            if "idle_down" in self.frames and self.frames["idle_down"]:
+                state = "idle_down"
+            else:
+                return
+
         self.current_state = state
         self.current_frame_index = 0
         
-        # For idle animations, alternate between idle and walk frames
-        if state.startswith("idle"):
-            direction = state.split("_")[1]  # Extract direction (down, up, left, right)
-            self.animation_frames = [f"idle_{direction}", f"walk_{direction}"]
-            self.timer.start(self.idle_speed)  # Slower for breathing effect
-        else:
-            # Walking animation
-            self.animation_frames = [state]
-            self.timer.start(self.animation_speed)  # Faster for walking
+        # Set first frame immediately
+        self.setPixmap(self.frames[state][0])
+        
+        # Start timer
+        self.timer.start(self.animation_speed)
     
     def next_frame(self):
         """Advance to next animation frame"""
-        if not self.animation_frames:
+        frame_list = self.frames.get(self.current_state)
+        if not frame_list:
             return
         
-        # Safety check: verify object is still valid
+        # Safety check: verify object is valid
         try:
             # Cycle through frames
-            self.current_frame_index = (self.current_frame_index + 1) % len(self.animation_frames)
-            frame_state = self.animation_frames[self.current_frame_index]
-            
-            if frame_state in self.frames:
-                self.setPixmap(self.frames[frame_state])
+            self.current_frame_index = (self.current_frame_index + 1) % len(frame_list)
+            self.setPixmap(frame_list[self.current_frame_index])
         except RuntimeError:
-            # Object was deleted, stop the timer
             self.timer.stop()
             return
 
-    
     def set_direction(self, direction):
         """Change animation direction (up, down, left, right)"""
-        self.start_animation(f"idle_{direction}")
+        if f"idle_{direction}" != self.current_state:
+            self.start_animation(f"idle_{direction}")
     
     def start_walking(self, direction):
         """Start walking animation in given direction"""
-        self.start_animation(f"walk_{direction}")
+        target_state = f"walk_{direction}"
+        if target_state != self.current_state:
+            self.start_animation(target_state)
     
     def stop_walking(self):
         """Stop walking and return to idle"""
-        # Extract current direction from current state
-        if "_" in self.current_state:
-            direction = self.current_state.split("_")[1]
-            self.start_animation(f"idle_{direction}")
-        else:
-            self.start_animation("idle_down")
+        # Determine current direction from state string
+        parts = self.current_state.split("_")
+        direction = parts[1] if len(parts) > 1 else "down"
+        
+        target_state = f"idle_{direction}"
+        if target_state != self.current_state:
+            self.start_animation(target_state)
     
     def stop_animation(self):
         """Stop animation"""

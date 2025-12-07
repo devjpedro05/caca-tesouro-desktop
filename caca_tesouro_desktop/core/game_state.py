@@ -176,42 +176,42 @@ class GameState:
     # TURN MANAGEMENT
     # ============================================
     
-    def execute_turn(self):
-        """Execute a complete turn"""
-        player = self.current_player
-        if not player:
-            return
+    # ============================================
+    # REAL-TIME UPDATE
+    # ============================================
+
+    def update(self, delta_time: float):
+        """Global real-time update"""
+        # 1. Update systems
+        if self.monster_system:
+            try:
+                self.monster_system.update(delta_time)
+            except Exception as e:
+                self.log(f"[ERROR] MonsterSystem: {e}")
+
+        if self.combat_manager:
+            try:
+                self.combat_manager.update(delta_time)
+            except Exception as e:
+                self.log(f"[ERROR] CombatManager: {e}")
         
-        self.turn_number += 1
-        self.log(f"\n{'='*50}")
-        self.log(f"🎲 TURNO {self.turn_number} - {player.name}")
-        self.log(f"{'='*50}")
-        
-        # Reset player action points
-        player.reset_action_points()
-        
-        # Update stun status
-        player.update_stun()
-        
-        # Tick buffs
-        buff_messages = player.tick_buffs()
-        for msg in buff_messages:
-            self.log(msg)
-        
-        # Check if player can act
-        if not player.can_act():
-            self.log(f"⚠️ {player.name} está atordoado e não pode agir!")
-            self.end_turn()
-            return
-        
-        # Random event (if enabled)
-        if self.random_events_per_turn and self.events_enabled:
-            occurred, message = self.event_manager.trigger_random_event(player, self)
-            if occurred:
-                self.log(f"🎲 EVENTO ALEATÓRIO: {message}")
-        
-        # Check for victory/defeat
+        # 2. Update players (Resource Regen & Buffs)
+        # Use a localized time accumulator for less frequent updates if needed, 
+        # but for smooth bar animation, updating every tick is fine.
+        for player in self.players:
+            player.update(delta_time)
+
+        # 3. Check Game Over
         self.check_game_over()
+
+    # Legacy turn method removed/deprecated
+    def execute_turn(self):
+        """Deprecated: Real-time game logic handled in update()"""
+        pass
+    
+    def end_turn(self):
+         """Deprecated: Real-time game logic handled in update()"""
+         pass
 
     def start_combat(self, player, monster):
         """
@@ -271,36 +271,12 @@ class GameState:
         return None
 
     
-    def update(self, delta_time: float):
-        # """Global tick update called by the UI."""
-        # self.combat_manager.update(delta_time)
-        # self.monster_system.update(delta_time)
-        if self.monster_system:
-            try:
-                self.monster_system.update(delta_time)
-            except Exception as e:
-                self.log(f"[ERROR] MonsterSystem: {e}")
-
-        if self.combat_manager:
-            try:
-                self.combat_manager.update(delta_time)
-            except Exception as e:
-                self.log(f"[ERROR] CombatManager: {e}")
 
 
 
 
-    def end_turn(self):
-        """End current player's turn"""
-        player = self.current_player
-        self.log(f"✅ Fim do turno de {player.name}")
-        
-        # Move to next player
-        self.current_player_index = (self.current_player_index + 1) % len(self.players)
-        
-        # Start next turn automatically
-        if not self.game_over:
-            self.execute_turn()
+
+
     
     # ============================================
     # PLAYER ACTIONS
@@ -338,12 +314,12 @@ class GameState:
             self.log(f"❌ Movimento inválido: Túnel não conecta à posição atual")
             return False
         
-        # ⭐ CHECK STAMINA BEFORE MOVING
+        # ⭐ CHECK STAMINA (Real-time check)
         cost = edge.weight
         stamina_cost = cost * 2
         if player.stamina < stamina_cost:
-            self.log(f"❌ Stamina insuficiente! Precisa de {stamina_cost}, tem {player.stamina}")
-            self.log(f"💡 Dica: Encerre o turno para recuperar stamina")
+            # Silent fail for smoothness or small log
+            # self.log(f"❌ {player.name}: Stamina insuficiente!")
             return False
         
         # Check for obstacles on edge
@@ -374,7 +350,7 @@ class GameState:
         player.total_cost += cost
         player.distance_traveled += cost
         
-        self.log(f"🚶 {player.name} moveu de {old_vertex.name} para {new_vertex.name} (Custo: {cost}, Stamina: -{stamina_cost})")
+        # self.log(f"🚶 {player.name} moveu de {old_vertex.name} para {new_vertex.name} (Custo: {cost}, Stamina: -{stamina_cost})")
         
         # Enter new vertex
         self.enter_vertex(player, new_vertex_id)
@@ -617,12 +593,16 @@ class GameState:
     
     def check_victory(self) -> Optional[Player]:
         """Check if any player won"""
+        if self.game_over:
+            return self.winner
+
         winners = []
         for player in self.players:
             if player.current_vertex_id == self.treasure_vertex_id:
                 winners.append(player)
         
         if winners:
+             # ...
             # Resolve tie by lowest cost
             winner = min(winners, key=lambda p: p.total_cost)
             self.winner = winner
@@ -638,6 +618,9 @@ class GameState:
     
     def check_game_over(self):
         """Check for game over conditions"""
+        if self.game_over:
+            return
+
         # Check if all players are dead
         alive_players = [p for p in self.players if p.is_alive]
         if not alive_players:

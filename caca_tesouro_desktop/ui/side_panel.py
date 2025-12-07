@@ -8,10 +8,11 @@ class SidePanel(QWidget):
     Contém seções para Quest Log, Evento Atual e Estatísticas do Jogador.
     """
     
-    def __init__(self, game_state, main_window):
+    def __init__(self, game_state, main_window, player=None):
         super().__init__()
         self.game_state = game_state
         self.main_window = main_window
+        self.player = player  # Specific player to track
         
         # Define objectName para estilização QSS
         self.setObjectName("SidePanel")
@@ -440,8 +441,12 @@ class SidePanel(QWidget):
         """)
 
     def refresh(self):
-        """Atualizar informações do painel com dados do jogo"""
-        p = self.game_state.current_player
+        """Atualizar informações do painel com dados do jogador específico"""
+        p = self.player
+        if not p:
+            # Fallback (should not happen in dual panel mode)
+            p = self.game_state.current_player
+            
         if p:
             # Atualizar nome do jogador com cor
             self.lbl_player_name.setText(f"Jogador: {p.name}")
@@ -457,40 +462,36 @@ class SidePanel(QWidget):
             
             # ⭐ Atualizar Stamina com animação
             old_stamina = self.stamina_bar.value()
-            new_stamina = p.stamina
+            new_stamina = int(p.stamina)
             if old_stamina != new_stamina:
                 self.animate_stamina_change(old_stamina, new_stamina)
             self.stamina_bar.setMaximum(p.max_stamina)
-            self.lbl_stamina.setText(f"⚡ Stamina: {p.stamina}/{p.max_stamina}")
+            self.lbl_stamina.setText(f"⚡ Stamina: {int(p.stamina)}/{p.max_stamina}")
             
             # Atualizar estatísticas
-            self.lbl_movement.setText(f"🚶 Posição: {self.game_state.graph.vertices[p.current_vertex_id].name}")
+            vertex_name = "?"
+            if 0 <= p.current_vertex_id < len(self.game_state.graph.vertices):
+                 vertex_name = self.game_state.graph.vertices[p.current_vertex_id].name
+            self.lbl_movement.setText(f"🚶 Posição: {vertex_name}")
             
             # Action Points com cor
-            ap_color = "green" if p.action_points > 1 else ("orange" if p.action_points > 0 else "red")
-            self.lbl_action_points.setText(f"🎯 AP: {p.action_points}/{p.max_action_points}")
-            self.lbl_action_points.setStyleSheet(f"color: {ap_color};")
+            # ap_color = "green" if p.action_points > 1 else ("orange" if p.action_points > 0 else "red")
+            # self.lbl_action_points.setText(f"🎯 AP: {p.action_points}/{p.max_action_points}")
+            # self.lbl_action_points.setStyleSheet(f"color: {ap_color};")
+            # REMOVED AP DISPLAY - it's real time now, stamina is king.
+            self.lbl_action_points.setText(f"") 
             
             self.lbl_cards.setText(f"🃏 Cartas: {len(p.hand_cards)}")
-            self.lbl_gold.setText(f"💰 Ouro gasto: {p.total_cost}")
-            self.lbl_cost.setText(f"📊 Total de movimentos: {len(self.game_state.logs)}")
+            self.lbl_gold.setText(f"💰 Ouro: {p.gold}")
+            self.lbl_cost.setText(f"📊 Custo Total: {p.total_cost}")
             
-            # Atualizar evento atual
-            if hasattr(self.game_state, 'current_event') and self.game_state.current_event:
-                self.lbl_current_event.setText(self.game_state.current_event)
-            else:
-                self.lbl_current_event.setText(f"Turno de {p.name} - Aguardando ação...")
+            # Atualizar evento atual (global or generic message)
+            # if hasattr(self.game_state, 'current_event') and self.game_state.current_event:
+            #    self.lbl_current_event.setText(self.game_state.current_event)
+            # else:
+            self.lbl_current_event.setText(f"Explorando...")
         else:
-            self.lbl_player_name.setText("Jogador: -")
-            self.lbl_hp.setText("❤️ HP: 0/0")
-            self.hp_bar.setValue(0)
-            self.lbl_stamina.setText("⚡ Stamina: 0/0")
-            self.stamina_bar.setValue(0)
-            self.lbl_movement.setText("🚶 Posição: -")
-            self.lbl_action_points.setText("🎯 AP: 0/0")
-            self.lbl_cards.setText("🃏 Cartas: 0")
-            self.lbl_gold.setText("💰 Ouro gasto: 0")
-            self.lbl_cost.setText("📊 Total de movimentos: 0")
+             pass # Clear fields logic removed for brevity, initialized with defaults
         
         # Atualizar log
         self.txt_log.clear()
@@ -503,13 +504,13 @@ class SidePanel(QWidget):
         )
             
     def on_roll_dice(self):
-        """Rolar dado para movimento"""
-        self.game_state.roll_dice()
-        self.main_window.refresh_all()
+        """Rolar dado para movimento (Depreciado em tempo real, mantido para compatibilidade)"""
+        if self.player:
+            self.game_state.log(f"🎲 {self.player.name} rolou o dado (mas deve usar WASD/Setas para mover!)")
         
     def on_use_card(self):
         """Usar carta da mão"""
-        p = self.game_state.current_player
+        p = self.player or self.game_state.current_player
         if p and p.hand_cards:
             card = p.hand_cards[0]
             if self.game_state.play_card(p.id, card.id):

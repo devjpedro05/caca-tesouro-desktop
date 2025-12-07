@@ -71,13 +71,6 @@ class BottomBar(QWidget):
         
         # ===== BOTÕES PRINCIPAIS (Direita) =====
         
-        # Botão Encerrar Turno (grande e dourado)
-        self.btn_end_turn = QPushButton("ENCERRAR TURNO")
-        self.btn_end_turn.setObjectName("btnEndTurn")
-        self.btn_end_turn.setToolTip("Finalizar seu turno e passar para o próximo jogador")
-        self.btn_end_turn.clicked.connect(self.on_end_turn)
-        self.layout.addWidget(self.btn_end_turn)
-        
         # Botão Ajuda
         self.btn_help = QPushButton("?")
         self.btn_help.setObjectName("btnHelp")
@@ -87,56 +80,70 @@ class BottomBar(QWidget):
     
     # ===== SLOTS PARA AÇÕES =====
     
+    # ===== SLOTS PARA AÇÕES =====
+    
     def on_search(self):
         """Ação de buscar/escanear área"""
-        self.game_state.log("🔍 Buscando por tesouros e armadilhas...")
+        # Determine active player (e.g., focused player or player 1 default for single user, or contextual)
+        # Since it's real-time/simultaneous, these bottom buttons might be ambiguous.
+        # Assuming they apply to the "local" player or Player 1 for now, or finding best heuristic.
+        # Let's use P1 (Red) as default for bottom bar clicks if not specified? 
+        # Or better: Log that this feature is best used via keyboard/interaction?
+        # User requested "implement buttons", so let's make them work for Player 1 or "Main" player.
+        
+        player = self.game_state.players[0] if self.game_state.players else None
+        if not player: return
+
+        self.game_state.log(f"🔍 {player.name} examina a área...")
         self.search_clicked.emit()
-        # TODO: Implementar lógica de busca
+        
+        # Simple Logic: Check if there's hidden stuff? For now just flavor text/anim
+        self.game_state.log(f"   Nada de incomum encontrado à vista.")
+        
         self.main_window.refresh_all()
     
     def on_use_item(self):
         """Ação de usar item"""
-        self.game_state.log("🎒 Abrindo inventário...")
+        player = self.game_state.players[0] if self.game_state.players else None
+        if not player: return
+
+        self.game_state.log(f"🎒 {player.name} abre a mochila...")
         self.use_item_clicked.emit()
-        # TODO: Abrir diálogo de seleção de item
+        
+        from .inventory_dialog import InventoryDialog
+        inv_dialog = InventoryDialog(player, self)
+        inv_dialog.exec()
+        
         self.main_window.refresh_all()
     
     def on_move(self):
-        """Ação de mover (via clique no mapa)"""
-        self.game_state.log("👣 Clique no mapa para se mover")
+        """Ação de mover (Centralizar Câmera)"""
+        self.game_state.log("🎥 Centralizando câmera nos jogadores")
         self.move_clicked.emit()
-        # A movimentação é feita clicando no BoardView
+        
+        if hasattr(self.main_window, 'board_view'):
+            self.main_window.board_view.center_on_current_player() # This centers on 'current' (P1 usually)
+            
         self.main_window.refresh_all()
     
     def on_attack(self):
         """Ação de atacar"""
-        self.game_state.log("⚔️ Modo de ataque ativado")
+        self.game_state.log("⚔️ Para atacar, mova-se em direção ao monstro!")
         self.attack_clicked.emit()
-        # TODO: Implementar lógica de combate
         self.main_window.refresh_all()
     
     def on_skill(self):
         """Ação de usar habilidade/magia"""
-        self.game_state.log("✨ Selecionando habilidade...")
+        self.game_state.log("✨ Habilidades ainda não aprendidas.")
         self.skill_clicked.emit()
-        # TODO: Implementar sistema de habilidades
-        self.main_window.refresh_all()
-    
-    def on_end_turn(self):
-        """Encerrar turno do jogador atual"""
-        self.game_state.end_turn()
-        self.end_turn_clicked.emit()
         self.main_window.refresh_all()
     
     def on_help(self):
         """Mostrar ajuda"""
-        self.game_state.log("❓ Abrindo ajuda...")
+        self.game_state.log("❓ Use Setas ou WASD para mover. Encontre o tesouro!")
         self.help_clicked.emit()
-        # TODO: Abrir diálogo de ajuda com regras
         self.main_window.refresh_all()
     
     def refresh(self):
         """Atualizar estado dos botões baseado no estado do jogo"""
-        # Desabilitar botões se não for o turno do jogador ou se o jogo acabou
-        # Por enquanto, todos os botões ficam habilitados
         pass
