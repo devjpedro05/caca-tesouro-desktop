@@ -43,12 +43,12 @@ class FrameAnimatedSprite(QGraphicsPixmapItem):
         frame_patterns = {
             "idle_down": "*Parado*frente*.png",
             "idle_up": "*Parado*Costas*.png",
-            "idle_right": "*Parado*Direito*.png",
-            "idle_left": "*Parado*Esquerdo*.png",
+            "idle_right": "*Parado*Lado*D*reito*.png",  # Matches both "Deireito" and "Direito"
+            "idle_left": "*Parado*Lado*Esquerdo*.png",
             "walk_down": "*Andando*frente*.png",
             "walk_up": "*Andando*Costas*.png",
-            "walk_right": "*Andando*Direito*.png",
-            "walk_left": "*Andando*Esquerdo*.png",
+            "walk_right": "*Andando*Lado*Direito*.png",
+            "walk_left": "*Andando*Lado*Esquerdo*.png",
         }
         
         for state, pattern in frame_patterns.items():
@@ -67,8 +67,9 @@ class FrameAnimatedSprite(QGraphicsPixmapItem):
                         self.frames[state].append(pixmap)
                     else:
                         print(f"❌ Failed to load {state}: {frame_path}")
+                print(f"✅ Loaded {len(self.frames[state])} frames for {state}")
             else:
-                pass
+                print(f"⚠️ No frames found for {state} with pattern: {pattern}")
         
         # Set initial frame
         if "idle_down" in self.frames and self.frames["idle_down"]:
@@ -117,6 +118,7 @@ class FrameAnimatedSprite(QGraphicsPixmapItem):
     def start_walking(self, direction):
         """Start walking animation in given direction"""
         target_state = f"walk_{direction}"
+        print(f"🚶 start_walking({direction}) -> {target_state}, current: {self.current_state}")
         if target_state != self.current_state:
             self.start_animation(target_state)
     
@@ -127,6 +129,7 @@ class FrameAnimatedSprite(QGraphicsPixmapItem):
         direction = parts[1] if len(parts) > 1 else "down"
         
         target_state = f"idle_{direction}"
+        print(f"🛑 stop_walking() -> {target_state}, current: {self.current_state}")
         if target_state != self.current_state:
             self.start_animation(target_state)
     

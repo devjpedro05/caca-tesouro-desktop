@@ -35,6 +35,10 @@ class MainWindow(QMainWindow):
         
         # Victory tracking
         self._victory_announced = False
+        self._game_over_announced = False
+        
+        # Game time tracking
+        self.game_start_time = time.time()
         
         # Define objectName para estilização QSS
         self.setObjectName("MainWindow")
@@ -304,6 +308,18 @@ class MainWindow(QMainWindow):
         # Update dual game manager (updates both game states)
         self.dual_manager.update(delta_time)
         
+        # Check for player deaths
+        p1 = self.dual_manager.get_player1()
+        p2 = self.dual_manager.get_player2()
+        
+        if not self._game_over_announced:
+            if p1 and not p1.is_alive:
+                self._game_over_announced = True
+                self._show_game_over_dialog(p1)
+            elif p2 and not p2.is_alive:
+                self._game_over_announced = True
+                self._show_game_over_dialog(p2)
+        
         # Check for victory
         winner = self.dual_manager.check_victory_conditions()
         if winner and not self._victory_announced:
@@ -339,52 +355,92 @@ class MainWindow(QMainWindow):
     
     def _show_victory_dialog(self, winner):
         """Show victory dialog when a player wins"""
-        from PySide6.QtWidgets import QMessageBox
+        from .victory_dialog import VictoryDialog
         
-        score_p1, score_p2 = self.dual_manager.get_scores()
+        # Calculate game stats
+        game_duration = time.time() - self.game_start_time
+        minutes = int(game_duration // 60)
+        seconds = int(game_duration % 60)
+        time_str = f"{minutes:02d}:{seconds:02d}"
         
-        title = f"🏆 VITÓRIA - {winner.name}! 🏆"
-        message = f"""
-{winner.name} VENCEU O JOGO!
-
-📊 Pontuação Final:
-{self.dual_manager.get_player1().name}: {score_p1} pontos
-{self.dual_manager.get_player2().name}: {score_p2} pontos
-
-⭐ Level: {winner.level}
-💰 Ouro: {winner.gold}
-🎯 XP: {winner.experience}
-"""
+        # Get monsters killed (approximate from experience)
+        monsters_killed = winner.experience // 10  # Assuming ~10 XP per monster
         
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle(title)
-        msg_box.setText(message)
-        msg_box.setIcon(QMessageBox.Information)
-        msg_box.setStyleSheet("""
-            QMessageBox {
-                background-color: #2b2b2b;
-                min-width: 400px;
-            }
-            QMessageBox QLabel {
-                color: #FFD700;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QMessageBox QPushButton {
-                background-color: #4a4a4a;
-                color: #ffffff;
-                border: 2px solid #FFD700;
-                border-radius: 5px;
-                padding: 10px 20px;
-                font-weight: bold;
-            }
-            QMessageBox QPushButton:hover {
-                background-color: #5a5a5a;
-                border-color: #FFA500;
-            }
-        """)
+        stats = {
+            'time': time_str,
+            'monsters_killed': monsters_killed,
+            'gold': winner.gold
+        }
         
-        msg_box.exec()
+        # Show victory dialog
+        dialog = VictoryDialog(winner, stats, self)
         
-        # Stop game loop after victory
+        # Connect signals
+        dialog.play_again.connect(self._restart_game)
+        dialog.quit_game.connect(self.close)
+        
+        # Stop game loop during dialog
         self.game_timer.stop()
+        
+        dialog.exec()
+    
+    def _show_game_over_dialog(self, dead_player):
+        """Show game over dialog when a player dies"""
+        from .game_over_dialog import GameOverDialog
+        
+        # Calculate game stats
+        game_duration = time.time() - self.game_start_time
+        minutes = int(game_duration // 60)
+        seconds = int(game_duration % 60)
+        time_str = f"{minutes:02d}:{seconds:02d}"
+        
+        # Get monsters killed
+        monsters_killed = dead_player.experience // 10
+        
+        stats = {
+            'time': time_str,
+            'monsters_killed': monsters_killed,
+            'gold': dead_player.gold
+        }
+        
+        # Show game over dialog
+        dialog = GameOverDialog(dead_player, "combate", stats, self)
+        
+        # Connect signals
+        dialog.try_again.connect(self._restart_game)
+        dialog.quit_game.connect(self.close)
+        
+        # Stop game loop during dialog
+        self.game_timer.stop()
+        
+        dialog.exec()
+    
+    def _restart_game(self):
+        """Restart the game with fresh states"""
+        # Reset flags
+        self._victory_announced = False
+        self._game_over_announced = False
+        self.game_start_time = time.time()
+        
+        # Reinitialize game states
+        from core.graph import Graph
+        graph = Graph.create_treasure_hunt_graph()
+        self.dual_manager.initialize_dual_games(graph)
+        
+        # Update references
+        self.game_state_p1 = self.dual_manager.game_state_p1
+        self.game_state_p2 = self.dual_manager.game_state_p2
+        self.game_state = self.game_state_p1
+        
+        # Reconnect board views to new game states
+        self.board_view_p1.game_state = self.game_state_p1
+        self.board_view_p2.game_state = self.game_state_p2
+        
+        # Refresh everything
+        self.board_view_p1.initialize_view()
+        self.board_view_p2.initialize_view()
+        self.refresh_all()
+        
+        # Restart game loop
+        self.last_update_time = time.time()
+        self.game_timer.start(16)

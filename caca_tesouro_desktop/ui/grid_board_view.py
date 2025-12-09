@@ -1153,10 +1153,6 @@ class GridBoardView(QGraphicsView):
             if self.grid_map.can_move_to(new_x, new_y):
                 stamina_cost = 3
                 if player_to_move.stamina >= stamina_cost:
-                    # Update sprite direction
-                    if player_to_move.id in self.player_sprites:
-                        self.player_sprites[player_to_move.id].start_walking(direction)
-                    
                     # Perform movement (without animation for continuous movement)
                     self._move_player_instant(player_to_move.id, new_x, new_y, direction)
     
@@ -1183,14 +1179,24 @@ class GridBoardView(QGraphicsView):
         stamina_cost = 3
         player.consume_stamina(stamina_cost)
         
-        # Update sprite position instantly (no animation)
+        # Update sprite position instantly (no animation) and show walking sprite
         if player_id in self.player_sprites:
+            sprite = self.player_sprites[player_id]
+            
+            # Start walking animation
+            sprite.start_walking(direction)
+            
+            # Update position
             tile_size = self.grid_map.tile_size
             px = new_x * tile_size + tile_size // 2
             py = new_y * tile_size + tile_size // 2
             sprite_x = px - 20
             sprite_y = py - 25
-            self.player_sprites[player_id].setPos(sprite_x, sprite_y)
+            sprite.setPos(sprite_x, sprite_y)
+            
+            # Keep walking animation active longer to be visible during continuous movement
+            # Return to idle just before next movement cycle (250ms - 50ms buffer = 200ms)
+            QTimer.singleShot(200, lambda: sprite.stop_walking() if sprite else None)
         
         # Check if there's a vertex at this position
         vertex_id = self.grid_map.get_vertex_at_position(new_x, new_y)
@@ -1209,8 +1215,9 @@ class GridBoardView(QGraphicsView):
             self.game_state.enter_vertex(player, vertex_id)
             self.game_state.check_victory()
         
-        # Refresh fog of war for this view only
-        self._refresh_dynamic_layers()
+        # Don't refresh dynamic layers here - it recreates sprites and breaks animation!
+        # Just update fog of war directly
+        self._update_fog()
     
     def move_player_to(self, player_id: int, new_x: int, new_y: int, direction: str):
         """Move player to new grid position with smooth animation"""
@@ -1361,8 +1368,8 @@ class GridBoardView(QGraphicsView):
     
     def show_monster_interaction_dialog(self, monster_state, player):
         """Show interaction dialog when player encounters a monster"""
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGridLayout
-        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGridLayout, QProgressBar
+        from PySide6.QtCore import Qt, QTimer
         from PySide6.QtGui import QFont
         
         # Pause game loop while dialog is open
@@ -1398,6 +1405,15 @@ class GridBoardView(QGraphicsView):
             QPushButton:pressed {
                 background-color: #3a3a3a;
             }
+            QProgressBar {
+                border: 2px solid #666666;
+                border-radius: 5px;
+                text-align: center;
+                background-color: #1a1a1a;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+            }
         """)
         
         layout = QVBoxLayout()
@@ -1412,11 +1428,20 @@ class GridBoardView(QGraphicsView):
         title_label.setFont(title_font)
         layout.addWidget(title_label)
         
-        # Monster stats
+        # Monster stats with HP bar
         stats_layout = QGridLayout()
         stats_layout.addWidget(QLabel("❤️ HP:"), 0, 0)
         monster_hp_label = QLabel(f"{monster.hp}/{monster.max_hp}")
         stats_layout.addWidget(monster_hp_label, 0, 1)
+        
+        # Monster HP progress bar
+        monster_hp_bar = QProgressBar()
+        monster_hp_bar.setMaximum(monster.max_hp)
+        monster_hp_bar.setValue(monster.hp)
+        monster_hp_bar.setTextVisible(True)
+        monster_hp_bar.setFormat(f"%v / {monster.max_hp} HP")
+        stats_layout.addWidget(monster_hp_bar, 0, 2)
+        
         stats_layout.addWidget(QLabel("⚔️ Ataque:"), 1, 0)
         stats_layout.addWidget(QLabel(str(monster.attack)), 1, 1)
         stats_layout.addWidget(QLabel("🛡️ Defesa:"), 2, 0)
@@ -1427,7 +1452,7 @@ class GridBoardView(QGraphicsView):
         
         layout.addSpacing(20)
         
-        # Player stats
+        # Player stats with HP bar
         player_label = QLabel(f"📊 {player.name}")
         player_font = QFont()
         player_font.setPointSize(12)
@@ -1439,6 +1464,15 @@ class GridBoardView(QGraphicsView):
         player_stats_layout.addWidget(QLabel("❤️ HP:"), 0, 0)
         player_hp_label = QLabel(f"{player.hp}/{player.max_hp}")
         player_stats_layout.addWidget(player_hp_label, 0, 1)
+        
+        # Player HP progress bar
+        player_hp_bar = QProgressBar()
+        player_hp_bar.setMaximum(player.max_hp)
+        player_hp_bar.setValue(player.hp)
+        player_hp_bar.setTextVisible(True)
+        player_hp_bar.setFormat(f"%v / {player.max_hp} HP")
+        player_stats_layout.addWidget(player_hp_bar, 0, 2)
+        
         player_stats_layout.addWidget(QLabel("⚔️ Ataque:"), 1, 0)
         player_attack_label = QLabel(str(player.attack))
         player_stats_layout.addWidget(player_attack_label, 1, 1)
@@ -1449,17 +1483,6 @@ class GridBoardView(QGraphicsView):
         player_stamina_label = QLabel(f"{int(player.stamina)}/{player.max_stamina}")
         player_stats_layout.addWidget(player_stamina_label, 3, 1)
         layout.addLayout(player_stats_layout)
-        
-        # Function to update player stats display
-        def update_player_stats():
-            player_hp_label.setText(f"{player.hp}/{player.max_hp}")
-            player_attack_label.setText(str(player.attack))
-            player_defense_label.setText(str(player.defense))
-            player_stamina_label.setText(f"{int(player.stamina)}/{player.max_stamina}")
-            monster_hp_label.setText(f"{monster.hp}/{monster.max_hp}")
-        
-        # Store update function for use in action handlers
-        dialog.update_stats = update_player_stats  # type: ignore[attr-defined]
         
         layout.addSpacing(20)
         
@@ -1473,7 +1496,6 @@ class GridBoardView(QGraphicsView):
         # Combat button
         combat_btn = QPushButton("⚔️ Iniciar Combate")
         combat_btn.setMinimumHeight(40)
-        combat_btn.clicked.connect(lambda: self._handle_monster_action("combat", dialog, monster_state, player))
         buttons_layout.addWidget(combat_btn)
         
         # Inventory button
@@ -1496,7 +1518,86 @@ class GridBoardView(QGraphicsView):
         
         layout.addLayout(buttons_layout)
         dialog.setLayout(layout)
+        
+        # Combat update timer (runs during combat)
+        combat_timer = QTimer(dialog)
+        combat_timer.setInterval(120)  # Same as game loop tick rate
+        
+        def update_combat():
+            """Update combat state and HP displays"""
+            if hasattr(self.game_state, 'combat_manager'):
+                # Update combat system
+                self.game_state.combat_manager.update(0.12)
+                
+                # Update HP labels and bars
+                player_hp_label.setText(f"{player.hp}/{player.max_hp}")
+                player_hp_bar.setValue(player.hp)
+                player_hp_bar.setFormat(f"{player.hp} / {player.max_hp} HP")
+                
+                monster_hp_label.setText(f"{monster.hp}/{monster.max_hp}")
+                monster_hp_bar.setValue(monster.hp)
+                monster_hp_bar.setFormat(f"{monster.hp} / {monster.max_hp} HP")
+                
+                player_stamina_label.setText(f"{int(player.stamina)}/{player.max_stamina}")
+                
+                # Check end conditions
+                if not player.is_alive or not monster.is_alive():
+                    combat_timer.stop()
+                    
+                    # Show result message
+                    if not player.is_alive:
+                        actions_label.setText("💀 Você foi derrotado!")
+                    elif not monster.is_alive():
+                        actions_label.setText(f"🏆 Vitória! +{monster.get_reward_gold() if hasattr(monster, 'get_reward_gold') else 0} Gold")
+                    
+                    # Close dialog after 2 seconds
+                    QTimer.singleShot(2000, dialog.accept)
+        
+        def start_combat():
+            """Initialize combat and start update timer"""
+            # Start combat via combat manager
+            if hasattr(self.game_state, 'combat_manager'):
+                self.game_state.combat_manager.start_combat(player, monster)
+                self.game_state.log(f"⚔️ {player.name} iniciou combate contra {monster.monster_type.value.title()}!")
+                
+                # Disable action buttons during combat
+                combat_btn.setEnabled(False)
+                inventory_btn.setEnabled(False)
+                cards_btn.setEnabled(False)
+                flee_btn.setEnabled(False)
+                
+                # Update label
+                actions_label.setText("⚔️ Combate em andamento...")
+                
+                # Start combat update timer
+                combat_timer.start()
+        
+        combat_timer.timeout.connect(update_combat)
+        combat_btn.clicked.connect(start_combat)
+        
         dialog.exec()
+        
+        # Clean up timer
+        combat_timer.stop()
+        
+        # After dialog closes, check if monster died and remove it
+        if not monster.is_alive():
+            # Remove monster from monster system
+            if hasattr(self.game_state, 'monster_system'):
+                vertex_id = player.current_vertex_id  # Monster is at same position as player
+                if vertex_id in self.game_state.monster_system.active_monsters:
+                    del self.game_state.monster_system.active_monsters[vertex_id]
+                    self.game_state.log(f"🗑️ {monster.monster_type.value.title()} removido do mapa")
+                
+                # Remove monster sprite from view
+                if vertex_id in self.monster_sprites:
+                    sprite = self.monster_sprites[vertex_id]
+                    if sprite.scene():
+                        self._scene.removeItem(sprite)
+                    del self.monster_sprites[vertex_id]
+            
+            # Refresh to update view
+            self._update_fog()
         
         # Resume game loop after dialog closes
         if self.main_window and hasattr(self.main_window, 'game_timer'):
