@@ -100,17 +100,72 @@ class GridBoardView(QGraphicsView):
         self._draw_fog()
 
 
-    def center_on_current_player(self):
-        """Center the view on the current player's position"""
-        current_player = self.game_state.current_player
-        if not current_player:
+    def _update_camera_position(self):
+        """
+        Update camera position dynamically.
+        - If players are close, frame both.
+        - If far apart, follow the one closer to the treasure (Vertex 6).
+        """
+        if not self.game_state.players:
             return
+
+        # Get active players
+        active_players = [p for p in self.game_state.players if p.is_alive]
+        if not active_players:
+            return
+
+        # Get positions
+        positions = []
+        for p in active_players:
+            sprite = self.player_sprites.get(p.id)
+            if sprite:
+                positions.append(sprite.pos())
         
-        # Get player sprite
-        sprite = self.player_sprites.get(current_player.id)
-        if sprite:
-            # Center view on player
-            self.centerOn(sprite)
+        if not positions:
+            return
+
+        # Calculate centroid or focus point
+        if len(positions) == 1:
+            target_pos = positions[0]
+        else:
+            # Check distance between players
+            p1_pos = positions[0]
+            p2_pos = positions[1]
+            dist = (p1_pos - p2_pos).manhattanLength()
+            
+            # Threshold for "too far" (e.g., 600 pixels ~ 12 tiles)
+            if dist > 600:
+                # Follow player closer to treasure (Vertex 6)
+                # We need to know which player is closer. 
+                # Let's check distance to tile (9, 2) which is Treasure Chamber usually?
+                # Actually, Vertex 6 is Treasure Chamber.
+                treasure_pos = self.grid_map.get_vertex_position(self.game_state.treasure_vertex_id) # tuple (x,y)
+                if treasure_pos == (-1, -1):
+                    # Fallback if vertex not found
+                    target_pos = (p1_pos + p2_pos) / 2
+                else:
+                     # Convert grid to pixel
+                    tx = treasure_pos[0] * self.grid_map.tile_size
+                    ty = treasure_pos[1] * self.grid_map.tile_size
+                    t_point = QPointF(tx, ty)
+                    
+                    d1 = (p1_pos - t_point).manhattanLength()
+                    d2 = (p2_pos - t_point).manhattanLength()
+                    
+                    if d1 < d2:
+                        target_pos = p1_pos
+                    else:
+                        target_pos = p2_pos
+            else:
+                # Frame both (center point)
+                target_pos = (p1_pos + p2_pos) / 2
+
+        self.centerOn(target_pos)
+
+    def center_on_current_player(self):
+        """Center the view on the current player's position (Legacy/Fallback)"""
+        # We prefer the dynamic update now
+        self._update_camera_position()
 
     def _on_update_tick(self):
         """Update only game logic every tick and refresh lightweight layers."""
@@ -132,6 +187,9 @@ class GridBoardView(QGraphicsView):
         if self.movement_cooldown <= 0 and self.pressed_keys and not self.is_animating:
             self._process_continuous_movement()
             self.movement_cooldown = self.movement_delay
+
+        # Update camera dynamically
+        self._update_camera_position()
 
         # Update Goblin patrol positions
         self._update_goblin_patrol(delta)
@@ -1075,7 +1133,7 @@ class GridBoardView(QGraphicsView):
         # self.game_state.log(f"🚶 {player.name} moveu para ({new_x}, {new_y}) - Stamina: -{stamina_cost}")
         
         # Center camera on player after movement
-        self.center_on_current_player()
+        # self.center_on_current_player() # Removed: handled by tick update
         
         # Animate movement if sprite exists
         if player_id in self.player_sprites:
@@ -1120,10 +1178,10 @@ class GridBoardView(QGraphicsView):
         from PySide6.QtCore import QVariantAnimation
         
         animation = QVariantAnimation()
-        animation.setDuration(100)  # 100ms for snappier movement
+        animation.setDuration(60)  # 60ms for fast, snappy movement
         animation.setStartValue(start_pos)
         animation.setEndValue(end_pos)
-        animation.setEasingCurve(QEasingCurve.Linear)  # Linear for continuous feeling
+        animation.setEasingCurve(QEasingCurve.OutQuad)  # OutQuad for smooth deceleration
         
         # Update sprite position on each animation step
         def update_position(value):
