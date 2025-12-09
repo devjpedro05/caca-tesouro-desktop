@@ -139,7 +139,7 @@ class GridBoardView(QGraphicsView):
                 # We need to know which player is closer. 
                 # Let's check distance to tile (9, 2) which is Treasure Chamber usually?
                 # Actually, Vertex 6 is Treasure Chamber.
-                treasure_pos = self.grid_map.get_vertex_position(self.game_state.treasure_vertex_id) # tuple (x,y)
+                treasure_pos = self.grid_map.get_position_for_vertex(self.game_state.treasure_vertex_id) # tuple (x,y)
                 if treasure_pos == (-1, -1):
                     # Fallback if vertex not found
                     target_pos = (p1_pos + p2_pos) / 2
