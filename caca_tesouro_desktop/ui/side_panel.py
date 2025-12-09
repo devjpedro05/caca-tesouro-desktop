@@ -506,20 +506,23 @@ class SidePanel(QWidget):
     def on_roll_dice(self):
         """Rolar dado para movimento (Depreciado em tempo real, mantido para compatibilidade)"""
         if self.player:
-            self.game_state.log(f"🎲 {self.player.name} rolou o dado (mas deve usar WASD/Setas para mover!)")
+            val = self.game_state.roll_dice()
+            self.game_state.log(f"🎲 {self.player.name} rolou: {val} (Use para testes de sorte!)")
+            self.main_window.refresh_all()
         
     def on_use_card(self):
         """Usar carta da mão"""
         p = self.player or self.game_state.current_player
-        if p and p.hand_cards:
-            card = p.hand_cards[0]
-            if self.game_state.play_card(p.id, card.id):
+        if p:
+            if not p.hand_cards:
+                self.game_state.log(f"❌ {p.name} não possui cartas!")
                 self.main_window.refresh_all()
-            else:
-                self.game_state.log(f"Não foi possível usar a carta {card.type.value} (precisa de alvo?).")
-                self.main_window.refresh_all()
-        else:
-            self.game_state.log("Sem cartas na mão!")
+                return
+
+            # Open Cards Dialog
+            from .cards_dialog import CardsDialog
+            dialog = CardsDialog(p, self.game_state, self)
+            dialog.exec()
             self.main_window.refresh_all()
 
     def set_current_event(self, message):

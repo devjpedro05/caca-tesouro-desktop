@@ -30,7 +30,7 @@ class CardsDialog(QDialog):
         for card in self.player.hand_cards:
             btn_card = QPushButton(f"{card.type.value}\n(Lv {card.level})")
             btn_card.setMinimumHeight(80)
-            btn_card.clicked.connect(lambda c=card: self.use_card(c))
+            btn_card.clicked.connect(lambda checked=False, c=card: self.use_card(c))
             grid.addWidget(btn_card, row, col)
             
             col += 1
