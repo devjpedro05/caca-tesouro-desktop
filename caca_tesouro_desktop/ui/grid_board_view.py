@@ -10,31 +10,35 @@ from core.grid_map import GridMap, TileType
 class GridBoardView(QGraphicsView):
     """Grid-based board view with keyboard controls"""
     
-    def __init__(self, game_state, parent=None):
+    def __init__(self, game_state, parent=None, player_index=None):
         super().__init__(parent)
         self.game_state = game_state
-        self.scene = QGraphicsScene(self)
-        self.setScene(self.scene)
-        self.setRenderHint(QPainter.Antialiasing)
+        self.player_index = player_index  # None = both players, 0 = player 1, 1 = player 2
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # Define objectName para estilização QSS
         self.setObjectName("BoardView")
         
-        # Create grid map (20x20 with chambers and tunnels)
-        self.grid_map = GridMap()  # Uses default 20x20
-        self.grid_map.create_from_graph(self.game_state.graph)
+        # Create or reuse grid map (20x20 with chambers and tunnels)
+        # In split-screen mode, share the same grid_map across views
+        if hasattr(game_state, 'grid_map') and game_state.grid_map is not None:
+            self.grid_map = game_state.grid_map
+        else:
+            self.grid_map = GridMap()  # Uses default 20x20
+            self.grid_map.create_from_graph(self.game_state.graph)
+            # Link grid_map to game_state so logic can access it
+            self.game_state.grid_map = self.grid_map
         
-        # Link grid_map to game_state so logic can access it
-        self.game_state.grid_map = self.grid_map
-        
-        # Create fog of war system
+        # Create fog of war system (individual per view for split-screen)
         from core.fog_of_war import FogOfWar
         self.fog_of_war = FogOfWar(self.grid_map.width, self.grid_map.height)
         
-        # Initialize player positions in grid
+        # Initialize player positions in grid (only if not already done)
         for player in self.game_state.players:
             grid_pos = self.grid_map.get_position_for_vertex(player.current_vertex_id)
-            if grid_pos:
+            if grid_pos and self.grid_map.get_player_position(player.id) is None:
                 self.grid_map.set_player_position(player.id, grid_pos[0], grid_pos[1])
                 print(f"🎯 {player.name} (ID:{player.id}) inicializado em vertex {player.current_vertex_id} -> grid pos ({grid_pos[0]}, {grid_pos[1]})")
         
@@ -48,6 +52,9 @@ class GridBoardView(QGraphicsView):
         # Animation
         self.is_animating = False
         self.current_animation = None
+        
+        # Track if board has been initially drawn
+        self._board_initialized = False
         self.victory_animation_played = False
         
         self.main_window = None
@@ -55,10 +62,10 @@ class GridBoardView(QGraphicsView):
         # Key state tracking for continuous movement
         self.pressed_keys = set()  # Track currently pressed keys
         self.movement_cooldown = 0.0  # Cooldown between movements (seconds)
-        self.movement_delay = 0.05  # Delay between movements (50ms for faster gameplay)
+        self.movement_delay = 0.25  # Delay between movements (250ms - balanced speed)
         
-        # Enable keyboard focus
-        self.setFocusPolicy(Qt.StrongFocus)
+        # Don't grab focus - let MainWindow handle keyboard events
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         # Start update timer to drive game loop (monsters, combat ticks)
         self._last_tick_ms = None
@@ -72,19 +79,40 @@ class GridBoardView(QGraphicsView):
         self._dyn_players = QGraphicsItemGroup()
         self._dyn_monsters = QGraphicsItemGroup()
         self._dyn_fog = QGraphicsItemGroup()
-        self.scene.addItem(self._dyn_players)
-        self.scene.addItem(self._dyn_monsters)
-        self.scene.addItem(self._dyn_fog)
+        self._scene.addItem(self._dyn_players)
+        self._scene.addItem(self._dyn_monsters)
+        self._scene.addItem(self._dyn_fog)
         
         # Set Z-values for proper layering
         self._dyn_players.setZValue(5)   # Players on top
         self._dyn_monsters.setZValue(4)  # Monsters below players
         self._dyn_fog.setZValue(10)      # Fog above everything
         
-        # Connect CombatManager callback for damage popups
+        # Connect CombatManager callbacks - usar lista ao invés de sobrescrever
         if hasattr(self.game_state, 'combat_manager'):
-            self.game_state.combat_manager.on_damage_callback = self._on_combat_damage
-            self.game_state.combat_manager.on_death_callback = self._on_unit_death
+            # Inicializar listas de callbacks se não existirem
+            if not hasattr(self.game_state.combat_manager, '_damage_callbacks'):
+                self.game_state.combat_manager._damage_callbacks = []
+            if not hasattr(self.game_state.combat_manager, '_death_callbacks'):
+                self.game_state.combat_manager._death_callbacks = []
+            
+            # Adicionar callbacks desta view
+            if self._on_combat_damage not in self.game_state.combat_manager._damage_callbacks:
+                self.game_state.combat_manager._damage_callbacks.append(self._on_combat_damage)
+            if self._on_unit_death not in self.game_state.combat_manager._death_callbacks:
+                self.game_state.combat_manager._death_callbacks.append(self._on_unit_death)
+            
+            # Criar wrapper que chama todos os callbacks
+            def call_all_damage(*args, **kwargs):
+                for cb in self.game_state.combat_manager._damage_callbacks:
+                    cb(*args, **kwargs)
+            
+            def call_all_death(*args, **kwargs):
+                for cb in self.game_state.combat_manager._death_callbacks:
+                    cb(*args, **kwargs)
+            
+            self.game_state.combat_manager.on_damage_callback = call_all_damage
+            self.game_state.combat_manager.on_death_callback = call_all_death
             
         # Connect MonsterSystem callback for movement updates
         if hasattr(self.game_state, 'monster_system'):
@@ -129,7 +157,7 @@ class GridBoardView(QGraphicsView):
             self.movement_cooldown -= delta
         
         # Process continuous movement if cooldown expired
-        if self.movement_cooldown <= 0 and self.pressed_keys and not self.is_animating:
+        if self.movement_cooldown <= 0 and self.pressed_keys:
             self._process_continuous_movement()
             self.movement_cooldown = self.movement_delay
 
@@ -144,7 +172,7 @@ class GridBoardView(QGraphicsView):
         try:
             self.game_state.update(delta)
             # Advance animations
-            self.scene.advance()
+            self._scene.advance()
         except Exception as e:
             print(f"[ERROR] GameState.update(): {e}")
 
@@ -197,7 +225,17 @@ class GridBoardView(QGraphicsView):
 
     
     def refresh(self):
-        """Redraw the entire board"""
+        """Redraw or update the board"""
+        # If board hasn't been initialized yet, do full draw
+        if not self._board_initialized:
+            self._full_refresh()
+            self._board_initialized = True
+        else:
+            # Just update dynamic elements (players, monsters, fog)
+            self._update_dynamic_elements()
+    
+    def _full_refresh(self):
+        """Full board redraw (only called initially or when structure changes)"""
         # Stop all sprite timers before clearing
         for sprite in self.player_sprites.values():
             if hasattr(sprite, 'timer'):
@@ -208,7 +246,7 @@ class GridBoardView(QGraphicsView):
                 sprite.timer.stop()
         
         # Clear scene (this will delete all items including our groups!)
-        self.scene.clear()
+        self._scene.clear()
         self.player_sprites.clear()
         self.monster_sprites.clear()  # Must clear because scene.clear() deleted the sprites
         
@@ -217,9 +255,9 @@ class GridBoardView(QGraphicsView):
         self._dyn_players = QGraphicsItemGroup()
         self._dyn_monsters = QGraphicsItemGroup()
         self._dyn_fog = QGraphicsItemGroup()
-        self.scene.addItem(self._dyn_players)
-        self.scene.addItem(self._dyn_monsters)
-        self.scene.addItem(self._dyn_fog)
+        self._scene.addItem(self._dyn_players)
+        self._scene.addItem(self._dyn_monsters)
+        self._scene.addItem(self._dyn_fog)
         
         # Set Z-values for proper layering
         self._dyn_players.setZValue(5)
@@ -240,7 +278,58 @@ class GridBoardView(QGraphicsView):
         # Set scene rect
         scene_width = self.grid_map.width * self.grid_map.tile_size
         scene_height = self.grid_map.height * self.grid_map.tile_size
-        self.scene.setSceneRect(0, 0, scene_width, scene_height)
+        self._scene.setSceneRect(0, 0, scene_width, scene_height)
+    
+    def _update_dynamic_elements(self):
+        """Update only dynamic elements without recreating everything"""
+        # Update fog of war always (even during animation)
+        self._update_fog()
+        
+        # Don't update sprite positions during animation to avoid interrupting smooth movement
+        if self.is_animating:
+            return
+            
+        # Update player positions and HP
+        for player in self.game_state.players:
+            if player.id in self.player_sprites:
+                sprite = self.player_sprites[player.id]
+                # Use get_player_position (actual grid position) instead of get_position_for_vertex
+                # because player might be between vertices
+                grid_pos = self.grid_map.get_player_position(player.id)
+                if grid_pos:
+                    gx, gy = grid_pos
+                    tile_size = self.grid_map.tile_size
+                    px = gx * tile_size + tile_size // 2
+                    py = gy * tile_size + tile_size // 2
+                    sprite_x = px - 20
+                    sprite_y = py - 25
+                    
+                    # Only update position if it changed significantly
+                    current_pos = sprite.pos()
+                    if abs(current_pos.x() - sprite_x) > 1 or abs(current_pos.y() - sprite_y) > 1:
+                        sprite.setPos(sprite_x, sprite_y)
+        
+        # Update monster HP (positions should be stable unless they die)
+        if hasattr(self.game_state, 'monster_system') and self.game_state.monster_system:
+            for vertex_id, monster_state in self.game_state.monster_system.active_monsters.items():
+                if vertex_id in self.monster_sprites:
+                    goblin_sprite = self.monster_sprites[vertex_id]
+                    if hasattr(monster_state.monster, 'hp') and hasattr(monster_state.monster, 'max_hp'):
+                        goblin_sprite.update_hp(monster_state.monster.hp, monster_state.monster.max_hp)
+    
+    def _update_fog(self):
+        """Update fog of war without recreating everything"""
+        if not hasattr(self, '_dyn_fog'):
+            return
+            
+        # Clear existing fog items
+        for item in self._dyn_fog.childItems():
+            self._dyn_fog.removeFromGroup(item)
+            if item.scene():
+                self._scene.removeItem(item)
+        
+        # Redraw fog (filtered by player_index if set)
+        self._draw_fog(into=self._dyn_fog)
 
     
     def _draw_grid(self):
@@ -262,7 +351,7 @@ class GridBoardView(QGraphicsView):
         # Scale textures to tile size
         for key in textures:
             if not textures[key].isNull():
-                textures[key] = textures[key].scaled(tile_size, tile_size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                textures[key] = textures[key].scaled(tile_size, tile_size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
         
         for y in range(self.grid_map.height):
             for x in range(self.grid_map.width):
@@ -312,7 +401,7 @@ class GridBoardView(QGraphicsView):
                     tile.setPen(QPen(QColor("#444444"), 1))
                 
                 tile.setZValue(0)
-                self.scene.addItem(tile)
+                self._scene.addItem(tile)
 
     def _draw_spawn_chambers(self):
         """Draw special textures covering chambers:
@@ -374,7 +463,7 @@ class GridBoardView(QGraphicsView):
             texture_item = QGraphicsPixmapItem(scaled_pixmap)
             texture_item.setPos(px, py)
             texture_item.setZValue(0.5)  # Above regular floor tiles but below everything else
-            self.scene.addItem(texture_item)
+            self._scene.addItem(texture_item)
     
     def _draw_obstacles(self):
         """Draw obstacles on the grid (excluding monsters - they have animated sprites)"""
@@ -397,8 +486,8 @@ class GridBoardView(QGraphicsView):
             if not obstacle_sprites[key].isNull():
                 obstacle_sprites[key] = obstacle_sprites[key].scaled(
                     tile_size, tile_size,
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
                 )
         
         # Draw each obstacle
@@ -422,7 +511,7 @@ class GridBoardView(QGraphicsView):
                 item = QGraphicsPixmapItem(sprite_pixmap)
                 item.setPos(px, py)
                 item.setZValue(3)  # Above tiles, below players
-                self.scene.addItem(item)
+                self._scene.addItem(item)
             else:
                 # Fallback: draw colored rectangle for traps and other obstacles
                 if obstacle.obstacle_type == ObstacleType.TRAP:
@@ -430,7 +519,7 @@ class GridBoardView(QGraphicsView):
                     trap.setBrush(QBrush(QColor("#8B0000")))  # Dark red
                     trap.setPen(QPen(QColor("#FF0000"), 2))
                     trap.setZValue(3)
-                    self.scene.addItem(trap)
+                    self._scene.addItem(trap)
     
     def _draw_players(self, into=None):
         """Draw players on grid
@@ -442,12 +531,19 @@ class GridBoardView(QGraphicsView):
         from .frame_animated_sprite import FrameAnimatedSprite
         from PySide6.QtWidgets import QGraphicsItemGroup
         
-        into = into or self.scene  # Default to scene if not specified
+        into = into or self._scene  # Default to scene if not specified
         tile_size = self.grid_map.tile_size
         
         for player in self.game_state.players:
             if not player.is_alive:
                 continue
+            
+            # In split-screen mode, only draw this view's player
+            # Each GameState has only 1 player, so check player.id instead of index
+            if self.player_index is not None:
+                # player_index 0 = Player ID 0, player_index 1 = Player ID 1
+                if player.id != self.player_index:
+                    continue  # Skip other players
                 
             grid_pos = self.grid_map.get_player_position(player.id)
             if not grid_pos:
@@ -480,7 +576,6 @@ class GridBoardView(QGraphicsView):
                     into.addItem(sprite)
                     
                 self.player_sprites[player.id] = sprite
-                print(f"🎨 {player.name}: grid({x},{y}) -> pixel({px},{py}) -> sprite_pos({sprite_x},{sprite_y})")
             else:
                 # Fallback circle
                 circle = QGraphicsEllipseItem(px - 10, py - 10, 20, 20)
@@ -506,7 +601,7 @@ class GridBoardView(QGraphicsView):
         from PySide6.QtWidgets import QGraphicsItemGroup
         from .goblin_sprite import GoblinSprite
         
-        into = into or self.scene  # Default to scene if not specified
+        into = into or self._scene  # Default to scene if not specified
         
         # Check if MonsterSystem exists
         if not hasattr(self.game_state, 'monster_system'):
@@ -636,7 +731,7 @@ class GridBoardView(QGraphicsView):
                     glow_item = QGraphicsPixmapItem(scaled_pixmap)
                     glow_item.setPos(px, py)
                     glow_item.setZValue(2.5)  # Below monsters/players but above floor
-                    self.scene.addItem(glow_item)
+                    self._scene.addItem(glow_item)
             
             # Draw small golden treasure icon at center
             center_x, center_y = chamber_info['center']
@@ -647,7 +742,7 @@ class GridBoardView(QGraphicsView):
             treasure.setBrush(QBrush(QColor("#FFD700")))
             treasure.setPen(QPen(QColor("#FFA500"), 2))
             treasure.setZValue(3)
-            self.scene.addItem(treasure)
+            self._scene.addItem(treasure)
     
     def _draw_fog(self, into=None):
         """Draw fog of war overlay
@@ -657,15 +752,26 @@ class GridBoardView(QGraphicsView):
         """
         from PySide6.QtWidgets import QGraphicsItemGroup
         
-        into = into or self.scene  # Default to scene if not specified
+        into = into or self._scene  # Default to scene if not specified
         tile_size = self.grid_map.tile_size
         
         # Update fog visibility based on current player positions
+        # If player_index is set, only show fog for that specific player
         player_positions = []
-        for player in self.game_state.players:
-            pos = self.grid_map.get_player_position(player.id)
-            if pos:
-                player_positions.append(pos)
+        if self.player_index is not None:
+            # Single player view - show only this player's perspective
+            # In dual mode, each GameState has only 1 player at index 0
+            if len(self.game_state.players) > 0:
+                player = self.game_state.players[0]  # Always use index 0 in dual mode
+                pos = self.grid_map.get_player_position(player.id)
+                if pos:
+                    player_positions.append(pos)
+        else:
+            # Both players view (legacy mode)
+            for player in self.game_state.players:
+                pos = self.grid_map.get_player_position(player.id)
+                if pos:
+                    player_positions.append(pos)
         
         # Update visibility with dynamic radius based on location
         self.fog_of_war.update_visibility(
@@ -684,7 +790,7 @@ class GridBoardView(QGraphicsView):
                     
                     fog_tile = QGraphicsRectItem(px, py, tile_size, tile_size)
                     fog_tile.setBrush(QBrush(QColor(0, 0, 0, opacity)))
-                    fog_tile.setPen(QPen(Qt.NoPen))
+                    fog_tile.setPen(QPen(Qt.PenStyle.NoPen))
                     fog_tile.setZValue(10)  # Above everything
                     
                     # Add to group or scene
@@ -707,17 +813,17 @@ class GridBoardView(QGraphicsView):
             # Remove all children from player group
             for item in list(self._dyn_players.childItems()):
                 self._dyn_players.removeFromGroup(item)
-                self.scene.removeItem(item)
+                self._scene.removeItem(item)
                 # Stop sprite timers if present
                 if hasattr(item, 'timer'):
-                    item.timer.stop()
+                    item.timer.stop()  # type: ignore[attr-defined]
             
             # Remove all children from monster group (but keep monster sprites alive)
             monster_sprites_to_keep = set(self.monster_sprites.values())
             for item in list(self._dyn_monsters.childItems()):
                 if item not in monster_sprites_to_keep:
                     self._dyn_monsters.removeFromGroup(item)
-                    self.scene.removeItem(item)
+                    self._scene.removeItem(item)
                 else:
                     # Just remove from group, don't delete
                     self._dyn_monsters.removeFromGroup(item)
@@ -725,7 +831,7 @@ class GridBoardView(QGraphicsView):
             # Remove all children from fog group
             for item in list(self._dyn_fog.childItems()):
                 self._dyn_fog.removeFromGroup(item)
-                self.scene.removeItem(item)
+                self._scene.removeItem(item)
             
             # Clear player sprites tracking (will be rebuilt)
             self.player_sprites.clear()
@@ -778,14 +884,14 @@ class GridBoardView(QGraphicsView):
         text.setZValue(15)  # Above everything
         
         # Add to scene
-        self.scene.addItem(text)
+        self._scene.addItem(text)
         
         # Animate fade out and remove after 600ms
         # Animate fade out and remove after 600ms
         def cleanup():
             try:
                 if text.scene():
-                    self.scene.removeItem(text)
+                    self._scene.removeItem(text)
             except RuntimeError:
                 pass # Already deleted
         QTimer.singleShot(600, cleanup)
@@ -832,13 +938,19 @@ class GridBoardView(QGraphicsView):
         
         def jitter(count=0):
             if count > 4:
-                sprite_item.setPos(orig_pos)
+                try:
+                    sprite_item.setPos(orig_pos)
+                except RuntimeError:
+                    pass  # Sprite was deleted
                 return
             
-            offset_x = random.randint(-5, 5)
-            offset_y = random.randint(-5, 5)
-            sprite_item.setPos(orig_pos.x() + offset_x, orig_pos.y() + offset_y)
-            QTimer.singleShot(50, lambda: jitter(count + 1))
+            try:
+                offset_x = random.randint(-5, 5)
+                offset_y = random.randint(-5, 5)
+                sprite_item.setPos(orig_pos.x() + offset_x, orig_pos.y() + offset_y)
+                QTimer.singleShot(50, lambda: jitter(count + 1))
+            except RuntimeError:
+                pass  # Sprite was deleted
             
         jitter()
 
@@ -867,6 +979,11 @@ class GridBoardView(QGraphicsView):
     
     def _on_unit_death(self, unit, unit_type):
         """Callback when a unit dies"""
+        # Evitar processamento duplicado - marcar unidade como processada
+        if hasattr(unit, '_death_processed'):
+            return
+        unit._death_processed = True
+        
         print(f"[DEBUG] Unit died: {unit} ({unit_type})")
         
         # Determine position
@@ -883,23 +1000,27 @@ class GridBoardView(QGraphicsView):
                     if monster_state.monster == unit:
                         vertex_id = v_id
                         
-                        # Play death animation on the Goblin sprite
+                        # Play death animation on the Goblin sprite (apenas na primeira view)
                         if vertex_id in self.monster_sprites:
                             goblin_sprite = self.monster_sprites[vertex_id]
-                            goblin_sprite.die()
                             
-                            # Remove sprite after death animation completes
-                            def remove_goblin():
-                                try:
-                                    if goblin_sprite.scene():
-                                        self.scene.removeItem(goblin_sprite)
-                                    if vertex_id in self.monster_sprites:
-                                        del self.monster_sprites[vertex_id]
-                                except RuntimeError:
-                                    pass
-                            
-                            # Death animation is 4 frames * 200ms = 800ms
-                            QTimer.singleShot(900, remove_goblin)
+                            # Verificar se a animação já foi iniciada
+                            if not hasattr(goblin_sprite, '_death_anim_started'):
+                                goblin_sprite._death_anim_started = True
+                                goblin_sprite.die()
+                                
+                                # Remove sprite after death animation completes
+                                def remove_goblin():
+                                    try:
+                                        if goblin_sprite.scene():
+                                            self._scene.removeItem(goblin_sprite)
+                                        if vertex_id in self.monster_sprites:
+                                            del self.monster_sprites[vertex_id]
+                                    except RuntimeError:
+                                        pass
+                                
+                                # Death animation is 4 frames * 200ms = 800ms
+                                QTimer.singleShot(900, remove_goblin)
                         
                         grid_pos = self.grid_map.get_position_for_vertex(vertex_id)
                         if grid_pos: x, y = grid_pos
@@ -923,13 +1044,13 @@ class GridBoardView(QGraphicsView):
         skull.setFont(font)
         skull.setPos(px - 15, py - 25)
         skull.setZValue(20)
-        self.scene.addItem(skull)
+        self._scene.addItem(skull)
         
         # Animate fade out
         def cleanup():
             try:
                 if skull.scene():
-                    self.scene.removeItem(skull)
+                    self._scene.removeItem(skull)
             except RuntimeError:
                 pass
         QTimer.singleShot(1500, cleanup)
@@ -940,96 +1061,104 @@ class GridBoardView(QGraphicsView):
 
     def keyPressEvent(self, event: QKeyEvent):
         """Handle keyboard input for movement - separate controls per player"""
-        if self.is_animating:
-            return  # Don't allow movement during animation
-        
         key = event.key()
         
-        # Determine which player is moving based on key pressed
-        player_to_move = None
-        direction = None
-        new_x, new_y = 0, 0
-
-        self.game_state.log(f"🎮 Tecla pressionada: {event.key()}")
+        # Add key to pressed_keys set for continuous movement
+        # Movement is processed by _process_continuous_movement() every 150ms
+        valid_keys = {
+            Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,  # Player Vermelho
+            Qt.Key.Key_W, Qt.Key.Key_S, Qt.Key.Key_A, Qt.Key.Key_D  # Player Azul
+        }
         
-        # Player Vermelho (Red) - Arrow Keys
-        if key == Qt.Key_Up:
-            player_to_move = self._get_player_by_color("#FF0000")
-            direction = "up"
-        elif key == Qt.Key_Down:
-            player_to_move = self._get_player_by_color("#FF0000")
-            direction = "down"
-        elif key == Qt.Key_Left:
-            player_to_move = self._get_player_by_color("#FF0000")
-            direction = "left"
-        elif key == Qt.Key_Right:
-            player_to_move = self._get_player_by_color("#FF0000")
-            direction = "right"
-        
-        # Player Azul (Blue) - WASD
-        elif key == Qt.Key_W:
-            player_to_move = self._get_player_by_color("#0000FF")
-            direction = "up"
-        elif key == Qt.Key_S:
-            player_to_move = self._get_player_by_color("#0000FF")
-            direction = "down"
-        elif key == Qt.Key_A:
-            player_to_move = self._get_player_by_color("#0000FF")
-            direction = "left"
-        elif key == Qt.Key_D:
-            player_to_move = self._get_player_by_color("#0000FF")
-            direction = "right"
+        if key in valid_keys:
+            self.pressed_keys.add(key)
         else:
             super().keyPressEvent(event)
-            return
-        
-        if not player_to_move:
-            return
-        
-        # Get current position
-        grid_pos = self.grid_map.get_player_position(player_to_move.id)
-        if not grid_pos:
-            return
-        
-        x, y = grid_pos
-        new_x, new_y = x, y
-        
-        # Calculate new position based on direction
-        if direction == "up":
-            new_y -= 1
-        elif direction == "down":
-            new_y += 1
-        elif direction == "left":
-            new_x -= 1
-        elif direction == "right":
-            new_x += 1
-        
-        # Check if there's an obstacle at the new position
-        obstacle = self.grid_map.obstacle_manager.get_obstacle((new_x, new_y))
-        if obstacle and obstacle.is_active:
-            # Check if player can pass through this obstacle
-            if not self.grid_map.obstacle_manager.can_pass((new_x, new_y), player_to_move):
-                # Show interaction dialog
-                self.show_interaction_dialog(obstacle, player_to_move)
-                return
-        
-        # Check if movement is valid (tile type)
-        if self.grid_map.can_move_to(new_x, new_y):
-            # Check stamina
-            stamina_cost = 2  # Cost per tile
-            if player_to_move.stamina >= stamina_cost:
-                # Update sprite direction
-                if player_to_move.id in self.player_sprites:
-                    self.player_sprites[player_to_move.id].start_walking(direction)
-                
-                # Perform movement
-                self.move_player_to(player_to_move.id, new_x, new_y, direction)
+    
+    def keyReleaseEvent(self, event: QKeyEvent):
+        """Handle key release to stop continuous movement"""
+        key = event.key()
+        self.pressed_keys.discard(key)  # Remove key from pressed set
+        super().keyReleaseEvent(event)
+    
+    def _process_continuous_movement(self):
+        """Process continuous movement for all currently pressed keys"""
+        for key in list(self.pressed_keys):  # Use list() to avoid modification during iteration
+            # Determine player and direction based on key
+            player_to_move = None
+            direction = None
+            
+            # Player Vermelho (Red) - Arrow Keys
+            if key == Qt.Key.Key_Up:
+                player_to_move = self._get_player_by_color("#FF0000")
+                direction = "up"
+            elif key == Qt.Key.Key_Down:
+                player_to_move = self._get_player_by_color("#FF0000")
+                direction = "down"
+            elif key == Qt.Key.Key_Left:
+                player_to_move = self._get_player_by_color("#FF0000")
+                direction = "left"
+            elif key == Qt.Key.Key_Right:
+                player_to_move = self._get_player_by_color("#FF0000")
+                direction = "right"
+            # Player Azul (Blue) - WASD
+            elif key == Qt.Key.Key_W:
+                player_to_move = self._get_player_by_color("#0000FF")
+                direction = "up"
+            elif key == Qt.Key.Key_S:
+                player_to_move = self._get_player_by_color("#0000FF")
+                direction = "down"
+            elif key == Qt.Key.Key_A:
+                player_to_move = self._get_player_by_color("#0000FF")
+                direction = "left"
+            elif key == Qt.Key.Key_D:
+                player_to_move = self._get_player_by_color("#0000FF")
+                direction = "right"
             else:
-                self.game_state.log(f"❌ {player_to_move.name}: Stamina insuficiente! Precisa de {stamina_cost}, tem {player_to_move.stamina}")
-                if self.main_window:
-                    self.main_window.refresh_all()
-        else:
-            self.game_state.log(f"❌ {player_to_move.name}: Não pode mover para essa posição!")
+                continue  # Skip unknown keys
+            
+            if not player_to_move:
+                continue
+            
+            # In split-screen mode, only respond if this view controls this player
+            if self.player_index is not None:
+                if player_to_move not in self.game_state.players:
+                    continue  # This view doesn't control this player
+            
+            # Get current position
+            grid_pos = self.grid_map.get_player_position(player_to_move.id)
+            if not grid_pos:
+                continue
+            
+            x, y = grid_pos
+            new_x, new_y = x, y
+            
+            # Calculate new position based on direction
+            if direction == "up":
+                new_y -= 1
+            elif direction == "down":
+                new_y += 1
+            elif direction == "left":
+                new_x -= 1
+            elif direction == "right":
+                new_x += 1
+            
+            # Check if there's an obstacle at the new position
+            obstacle = self.grid_map.obstacle_manager.get_obstacle((new_x, new_y))
+            if obstacle and obstacle.is_active:
+                if not self.grid_map.obstacle_manager.can_pass((new_x, new_y), player_to_move):
+                    continue  # Can't move through obstacle
+            
+            # Check if movement is valid and player has stamina
+            if self.grid_map.can_move_to(new_x, new_y):
+                stamina_cost = 3
+                if player_to_move.stamina >= stamina_cost:
+                    # Update sprite direction
+                    if player_to_move.id in self.player_sprites:
+                        self.player_sprites[player_to_move.id].start_walking(direction)
+                    
+                    # Perform movement (without animation for continuous movement)
+                    self._move_player_instant(player_to_move.id, new_x, new_y, direction)
     
     def _get_player_by_color(self, color: str):
         """Get player by color"""
@@ -1037,6 +1166,51 @@ class GridBoardView(QGraphicsView):
             if player.color == color:
                 return player
         return None
+    
+    def _move_player_instant(self, player_id: int, new_x: int, new_y: int, direction: str):
+        """Move player instantly without animation (for continuous movement)"""
+        player = self.game_state._get_player(player_id)
+        if not player:
+            return
+        
+        # Get old position
+        old_pos = self.grid_map.get_player_position(player_id)
+        
+        # Update grid position
+        self.grid_map.set_player_position(player_id, new_x, new_y)
+        
+        # Consume stamina
+        stamina_cost = 3
+        player.consume_stamina(stamina_cost)
+        
+        # Update sprite position instantly (no animation)
+        if player_id in self.player_sprites:
+            tile_size = self.grid_map.tile_size
+            px = new_x * tile_size + tile_size // 2
+            py = new_y * tile_size + tile_size // 2
+            sprite_x = px - 20
+            sprite_y = py - 25
+            self.player_sprites[player_id].setPos(sprite_x, sprite_y)
+        
+        # Check if there's a vertex at this position
+        vertex_id = self.grid_map.get_vertex_at_position(new_x, new_y)
+        if vertex_id is not None:
+            player.current_vertex_id = vertex_id
+            
+            # Check for monster (but don't show dialog during continuous movement)
+            if hasattr(self.game_state, 'monster_system'):
+                monster_state = self.game_state.monster_system.active_monsters.get(vertex_id)
+                if monster_state and monster_state.monster.is_alive():
+                    # Stop continuous movement when encountering monster
+                    self.pressed_keys.clear()
+                    self.show_monster_interaction_dialog(monster_state, player)
+                    return
+            
+            self.game_state.enter_vertex(player, vertex_id)
+            self.game_state.check_victory()
+        
+        # Refresh fog of war for this view only
+        self._refresh_dynamic_layers()
     
     def move_player_to(self, player_id: int, new_x: int, new_y: int, direction: str):
         """Move player to new grid position with smooth animation"""
@@ -1051,7 +1225,7 @@ class GridBoardView(QGraphicsView):
         self.grid_map.set_player_position(player_id, new_x, new_y)
         
         # Consume stamina
-        stamina_cost = 2
+        stamina_cost = 3
         player.consume_stamina(stamina_cost)
         
         # Check if there's a vertex at this position
@@ -1078,7 +1252,7 @@ class GridBoardView(QGraphicsView):
         self.center_on_current_player()
         
         # Animate movement if sprite exists
-        if player_id in self.player_sprites:
+        if player_id in self.player_sprites and old_pos is not None:
             self.animate_movement(player_id, old_pos, (new_x, new_y), direction)
         else:
             # No animation, just refresh
@@ -1120,27 +1294,41 @@ class GridBoardView(QGraphicsView):
         from PySide6.QtCore import QVariantAnimation
         
         animation = QVariantAnimation()
-        animation.setDuration(100)  # 100ms for snappier movement
+        animation.setDuration(100)  # 100ms for very fast, responsive movement
         animation.setStartValue(start_pos)
         animation.setEndValue(end_pos)
-        animation.setEasingCurve(QEasingCurve.Linear)  # Linear for continuous feeling
+        animation.setEasingCurve(QEasingCurve.Type.InOutQuad)  # Smooth easing for better feel
         
         # Update sprite position on each animation step
         def update_position(value):
             if sprite:
-                sprite.setPos(value)
+                try:
+                    sprite.setPos(value)
+                except RuntimeError:
+                    pass  # Sprite was deleted
         
         animation.valueChanged.connect(update_position)
         
         # When animation finishes
         def on_animation_finished():
-            self.is_animating = False
             # Return sprite to idle state
             if sprite:
-                sprite.stop_walking()
-            # Refresh UI
-            if self.main_window:
-                self.main_window.refresh_all()
+                try:
+                    sprite.stop_walking()
+                except RuntimeError:
+                    pass  # Sprite was deleted
+            
+            # Refresh UI to update fog
+            # Note: Commenting this out to allow simultaneous player movement
+            # Each view will refresh independently
+            # if self.main_window:
+            #     self.main_window.refresh_all()
+            
+            # Refresh only this view's fog
+            self._refresh_dynamic_layers()
+            
+            # Add a very short delay before allowing next movement
+            QTimer.singleShot(20, lambda: setattr(self, 'is_animating', False))
         
         animation.finished.connect(on_animation_finished)
         
@@ -1155,11 +1343,19 @@ class GridBoardView(QGraphicsView):
         from .interaction_dialog import InteractionDialog
         from core.obstacle_manager import ObstacleType
         
+        # Pause game loop while dialog is open
+        if self.main_window and hasattr(self.main_window, 'game_timer'):
+            self.main_window.game_timer.stop()
+        
         # Create and show dialog
         dialog = InteractionDialog(obstacle, player, self)
         result = dialog.exec()
         
-        if result == QDialog.Accepted:
+        # Resume game loop
+        if self.main_window and hasattr(self.main_window, 'game_timer'):
+            self.main_window.game_timer.start()
+        
+        if result == QDialog.DialogCode.Accepted:
             action = dialog.get_selected_action()
             self.handle_interaction_action(action, obstacle, player)
     
@@ -1168,6 +1364,10 @@ class GridBoardView(QGraphicsView):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGridLayout
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QFont
+        
+        # Pause game loop while dialog is open
+        if self.main_window and hasattr(self.main_window, 'game_timer'):
+            self.main_window.game_timer.stop()
         
         dialog = QDialog(self)
         dialog.setWindowTitle("⚔️ Encontro com Monstro!")
@@ -1205,7 +1405,7 @@ class GridBoardView(QGraphicsView):
         # Title
         monster = monster_state.monster
         title_label = QLabel(f"👹 {monster.monster_type.value.title()} Lv{monster.level} bloqueando o caminho!")
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
@@ -1215,7 +1415,8 @@ class GridBoardView(QGraphicsView):
         # Monster stats
         stats_layout = QGridLayout()
         stats_layout.addWidget(QLabel("❤️ HP:"), 0, 0)
-        stats_layout.addWidget(QLabel(f"{monster.hp}/{monster.max_hp}"), 0, 1)
+        monster_hp_label = QLabel(f"{monster.hp}/{monster.max_hp}")
+        stats_layout.addWidget(monster_hp_label, 0, 1)
         stats_layout.addWidget(QLabel("⚔️ Ataque:"), 1, 0)
         stats_layout.addWidget(QLabel(str(monster.attack)), 1, 1)
         stats_layout.addWidget(QLabel("🛡️ Defesa:"), 2, 0)
@@ -1236,20 +1437,35 @@ class GridBoardView(QGraphicsView):
         
         player_stats_layout = QGridLayout()
         player_stats_layout.addWidget(QLabel("❤️ HP:"), 0, 0)
-        player_stats_layout.addWidget(QLabel(f"{player.hp}/{player.max_hp}"), 0, 1)
+        player_hp_label = QLabel(f"{player.hp}/{player.max_hp}")
+        player_stats_layout.addWidget(player_hp_label, 0, 1)
         player_stats_layout.addWidget(QLabel("⚔️ Ataque:"), 1, 0)
-        player_stats_layout.addWidget(QLabel(str(player.attack)), 1, 1)
+        player_attack_label = QLabel(str(player.attack))
+        player_stats_layout.addWidget(player_attack_label, 1, 1)
         player_stats_layout.addWidget(QLabel("🛡️ Defesa:"), 2, 0)
-        player_stats_layout.addWidget(QLabel(str(player.defense)), 2, 1)
+        player_defense_label = QLabel(str(player.defense))
+        player_stats_layout.addWidget(player_defense_label, 2, 1)
         player_stats_layout.addWidget(QLabel("💧 Stamina:"), 3, 0)
-        player_stats_layout.addWidget(QLabel(f"{player.stamina}/{player.max_stamina}"), 3, 1)
+        player_stamina_label = QLabel(f"{int(player.stamina)}/{player.max_stamina}")
+        player_stats_layout.addWidget(player_stamina_label, 3, 1)
         layout.addLayout(player_stats_layout)
+        
+        # Function to update player stats display
+        def update_player_stats():
+            player_hp_label.setText(f"{player.hp}/{player.max_hp}")
+            player_attack_label.setText(str(player.attack))
+            player_defense_label.setText(str(player.defense))
+            player_stamina_label.setText(f"{int(player.stamina)}/{player.max_stamina}")
+            monster_hp_label.setText(f"{monster.hp}/{monster.max_hp}")
+        
+        # Store update function for use in action handlers
+        dialog.update_stats = update_player_stats  # type: ignore[attr-defined]
         
         layout.addSpacing(20)
         
         # Action buttons
         actions_label = QLabel("O que você deseja fazer?")
-        actions_label.setAlignment(Qt.AlignCenter)
+        actions_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(actions_label)
         
         buttons_layout = QVBoxLayout()
@@ -1281,6 +1497,10 @@ class GridBoardView(QGraphicsView):
         layout.addLayout(buttons_layout)
         dialog.setLayout(layout)
         dialog.exec()
+        
+        # Resume game loop after dialog closes
+        if self.main_window and hasattr(self.main_window, 'game_timer'):
+            self.main_window.game_timer.start()
     
     def _handle_monster_action(self, action, dialog, monster_state, player):
         """Handle monster interaction action"""
@@ -1300,15 +1520,12 @@ class GridBoardView(QGraphicsView):
             # Show inventory
             self.game_state.log(f"🎒 {player.name} abriu o inventário")
             from .inventory_dialog import InventoryDialog
-            inv_dialog = InventoryDialog(player, self)
+            inv_dialog = InventoryDialog(player, self.game_state, self)
             inv_dialog.exec()
-            # Don't close main dialog, let user decide action after checking inventory?
-            # User requirement: "Ver inventário deve abrir uma nova aba... apenas implemente o que for necessário"
-            # keeping functionality user-friendly. Returning to main dialog might be best, but exec() blocks.
-            # So main dialog stays open behind it? No, setModal(True) blocks interaction with parent.
-            # Simple solution: Just open and close inventory, main dialog remains open? 
-            # Or accept main dialog? No, user might want to check inventory then fight.
-            # `dialog` is the Interaction Dialog. I won't call `dialog.accept()` here so it stays open.
+            
+            # Update stats in combat dialog after closing inventory
+            if hasattr(dialog, 'update_stats'):
+                dialog.update_stats()
             
             if self.main_window:
                 self.main_window.refresh_all()
@@ -1319,6 +1536,10 @@ class GridBoardView(QGraphicsView):
             from .cards_dialog import CardsDialog
             cards_dialog = CardsDialog(player, self.game_state, self)
             cards_dialog.exec()
+            
+            # Update stats in combat dialog after closing cards
+            if hasattr(dialog, 'update_stats'):
+                dialog.update_stats()
             
             if self.main_window:
                 self.main_window.refresh_all()
@@ -1417,16 +1638,16 @@ class GridBoardView(QGraphicsView):
         gradient.setColorAt(0.5, QColor(255, 215, 0, 200)) # Gold middle
         gradient.setColorAt(1, QColor(255, 140, 0, 0))     # Transparent orange edge
         light.setBrush(QBrush(gradient))
-        light.setPen(Qt.NoPen)
+        light.setPen(Qt.PenStyle.NoPen)
         
-        self.scene.addItem(light)
+        self._scene.addItem(light)
         
         # 1. Expand Animation
         expand = QVariantAnimation(self)
         expand.setDuration(2000)
         expand.setStartValue(1.0)
         expand.setEndValue(30.0) # Expand 30x
-        expand.setEasingCurve(QEasingCurve.OutExpo)
+        expand.setEasingCurve(QEasingCurve.Type.OutExpo)
         
         def update_scale(s):
             light.setTransform(light.transform().fromScale(s, s))
@@ -1436,7 +1657,7 @@ class GridBoardView(QGraphicsView):
         
         # 2. Add text
         text = QGraphicsSimpleTextItem("TESOURO ENCONTRADO!")
-        font = QFont("Arial", 24, QFont.Bold)
+        font = QFont("Arial", 24, QFont.Weight.Bold)
         text.setFont(font)
         text.setBrush(QBrush(QColor("white")))
         
@@ -1444,9 +1665,11 @@ class GridBoardView(QGraphicsView):
         text_width = text.boundingRect().width()
         text.setPos(px - text_width/2, py - 50)
         text.setZValue(21)
-        self.scene.addItem(text)
+        self._scene.addItem(text)
         
         # Keep references
         self.victory_anim = expand 
+
+
 
 

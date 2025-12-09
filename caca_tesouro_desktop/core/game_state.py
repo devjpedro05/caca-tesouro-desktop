@@ -4,7 +4,11 @@ Integrates all game systems: graph, players, cards, obstacles, combat, events, r
 """
 import random
 from enum import Enum
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .grid_map import GridMap
+
 from .graph import Graph, BiomeType, HazardType, EdgeType
 from .player import Player, BuffType, Buff
 from .cards import Card, CardType, CardRarity
@@ -68,6 +72,12 @@ class GameState:
         #Systems
         self.monster_system = MonsterSystem(self)
         self.combat_manager = CombatManager(self)
+        
+        # Grid map (dynamically added by views or DualGameManager)
+        self.grid_map: Optional['GridMap'] = None  # Will be set to GridMap instance
+        
+        # Main window reference (for UI updates)
+        self.main_window = None
 
     
     @property
@@ -114,23 +124,36 @@ class GameState:
             for _ in range(3):
                 gs.draw_card(player.id)
         
+        # Distribuir itens iniciais igualmente para ambos os jogadores
+        from .resources import ResourceType
+        initial_items = [
+            ("Poção de Cura", "health_potion", 2),
+            ("Escudo Nível 1", "shield_lv1", 1),
+            ("Poção de Stamina", "stamina_potion", 2)
+        ]
+        for player in gs.players:
+            for item_name, item_id, quantity in initial_items:
+                for _ in range(quantity):
+                    player.add_item({"name": item_name, "id": item_id, "type": "consumable"})
+            gs.log(f"🎒 {player.name} recebeu itens iniciais: 2x Poção de Cura, 1x Escudo Nível 1, 2x Poção de Stamina")
+        
         # Spawn initial resources (NO random monsters to avoid conflicts)
         gs.spawn_resources()
         
         # FORCE spawn exactly 4 monsters (NO random spawns)
         # v0="Entrada" at (9,2) (Player Vermelho), v1="Caverna Azul" at (3,6) (Player Azul)
-        # Spawn in v2="Salão dos Espelhos", v4="Ponte de Pedra", v5="Lago Subterrâneo" (centro) and v6="Câmara do Tesouro"
+        # Spawn in v2="Salão dos Ecos", v3="Túnel Escuro", v4="Ponte de Pedra", v5="Lago Subterrâneo" (centro)
         gs.graph.vertices[2].has_monster = True
         gs.graph.vertices[2].monster_type = "goblin"
+        
+        gs.graph.vertices[3].has_monster = True
+        gs.graph.vertices[3].monster_type = "orc"  # Orc level 3 no Túnel Escuro
         
         gs.graph.vertices[4].has_monster = True
         gs.graph.vertices[4].monster_type = "goblin"
         
         gs.graph.vertices[5].has_monster = True
         gs.graph.vertices[5].monster_type = "goblin"
-        
-        gs.graph.vertices[6].has_monster = True  
-        gs.graph.vertices[6].monster_type = "orc"
         
         # Ensure MonsterSystem has loaded monsters from graph
         if hasattr(gs, 'monster_system') and gs.monster_system:

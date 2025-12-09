@@ -53,9 +53,11 @@ class MonsterSystem:
                     # fallback
                     mtype = MonsterType.GOBLIN
                 
-                # v2 has stronger Goblin (level 2), v5 (centro) has level 4
+                # v2 has stronger Goblin (level 2), v3 has Orc (level 3), v5 (centro) has level 4
                 if v_id == 2:
                     level = 2
+                elif v_id == 3:
+                    level = 3  # Orc level 3
                 elif v_id == 5:
                     level = 4
                 else:

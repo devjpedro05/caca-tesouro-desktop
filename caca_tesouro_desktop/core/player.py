@@ -53,7 +53,7 @@ class Player:
         # Resources
         self.stamina = 100
         self.max_stamina = 100
-        self.stamina_regen_rate = 15.0  # Regen per second
+        self.stamina_regen_rate = 0.5  # Regen 0.5 pontos por segundo (200 segundos para encher, ~3min)
         self.action_points = 3  # Actions per turn
         self.max_action_points = 3
         
@@ -219,9 +219,16 @@ class Player:
         
         return messages
     
-    def add_item(self, item_type: str, quantity: int = 1):
-        """Add item to inventory"""
-        self.inventory[item_type] = self.inventory.get(item_type, 0) + quantity
+    def add_item(self, item, quantity: int = 1):
+        """Add item to inventory (supports both string and dict)"""
+        if isinstance(item, dict):
+            # Store item objects in a separate list
+            if "items" not in self.inventory:
+                self.inventory["items"] = []
+            self.inventory["items"].append(item)
+        else:
+            # Legacy string-based items
+            self.inventory[item] = self.inventory.get(item, 0) + quantity
     
     def remove_item(self, item_type: str, quantity: int = 1) -> bool:
         """

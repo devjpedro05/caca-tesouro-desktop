@@ -54,10 +54,15 @@ class Vertex:
         self.explored = False
         self.has_treasure_chest = False
         self.has_monster = False
-        self.monster_type = None
+        self.monster_type: Optional[str] = None
         self.resources = {}  # resource_type -> amount
         self.obstacles = []  # List of obstacle objects
         
+        # Grid position (set by grid_map or DualGameManager)
+        self.grid_pos: Optional[Tuple[int, int]] = None
+        
+        # Monster level (for dual game manager)
+        self.monster_level: int = 1  # Default level
     def add_hazard(self, hazard: HazardType):
         """Add a hazard to this vertex"""
         if hazard not in self.hazards:
@@ -106,6 +111,10 @@ class Edge:
         self.collapse_chance = 0.0  # Probability of collapse when traversed
         self.discovered = False  # For secret passages
         self.obstacles = []  # List of obstacle objects on this edge
+        
+        # Stamina cost system - strategic tunnels
+        self.stamina_cost = 3  # Default stamina cost to traverse
+        self.monster_level_hint = 0  # 0 = no monster, 1-5 = monster level
         
         # Calculate initial collapse chance based on type
         self._update_collapse_chance()
@@ -297,6 +306,38 @@ class Graph:
                     vertex.add_resource(resource_type, amount)
                     added.append(vertex.id)
         return added
+    
+    def configure_tunnel_stamina_costs(self, monster_positions: Dict[int, int]):
+        """
+        Configure stamina costs for tunnels based on nearby monsters.
+        Strategic twist: Tunnels to STRONGER monsters cost LESS stamina (high risk, low cost)
+                        Tunnels to WEAKER monsters cost MORE stamina (low risk, high cost)
+        
+        Args:
+            monster_positions: Dict of {vertex_id: monster_level}
+        """
+        for edge in self.edges.values():
+            # Check if either endpoint has a monster
+            v1_monster_level = monster_positions.get(edge.v1_id, 0)
+            v2_monster_level = monster_positions.get(edge.v2_id, 0)
+            
+            max_monster_level = max(v1_monster_level, v2_monster_level)
+            
+            if max_monster_level == 0:
+                # No monster - default cost
+                edge.stamina_cost = 3
+                edge.monster_level_hint = 0
+            else:
+                # INVERSE COST: Higher level monsters = Lower stamina cost
+                # Level 1 monster: 5 stamina (safe but expensive)
+                # Level 2 monster: 4 stamina
+                # Level 3 monster: 3 stamina
+                # Level 4 monster: 2 stamina
+                # Level 5+ monster: 1 stamina (dangerous but cheap!)
+                edge.stamina_cost = max(1, 6 - max_monster_level)
+                edge.monster_level_hint = max_monster_level
+                
+        print(f"[GRAPH] Configured tunnel stamina costs based on {len(monster_positions)} monster positions")
     
     @staticmethod
     def sample_graph() -> 'Graph':

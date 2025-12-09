@@ -13,13 +13,24 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtWidgets import QApplication
 from core.game_state import GameState
+from core.dual_game_manager import DualGameManager
+from core.graph import Graph
 from ui.main_window import MainWindow
 
 def main():
     app = QApplication(sys.argv)
     
-    game_state = GameState.new_default_game()
-    window = MainWindow(game_state)
+    # Create dual game manager for 2-player mode
+    dual_manager = DualGameManager()
+    
+    # Create shared graph
+    graph = Graph.sample_graph()
+    
+    # Initialize both game states
+    dual_manager.initialize_dual_games(graph, "Explorador Azul", "Explorador Vermelho")
+    
+    # Create window with dual manager
+    window = MainWindow(dual_manager)
     window.show()
     
     sys.exit(app.exec())

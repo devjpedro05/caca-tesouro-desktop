@@ -28,11 +28,14 @@ class Obstacle:
         if self.data is None:
             self.data = {}
 
+from typing import Dict, Tuple, Optional
+
 class ObstacleManager:
     """Manages all obstacles on the map"""
     
     def __init__(self):
         self.obstacles: Dict[Tuple[int, int], Obstacle] = {}
+        self.grid_map: Optional['GridMap'] = None  # Reference to GridMap (set externally)
     
     def add_obstacle(self, obstacle: Obstacle):
         """Add an obstacle to the map"""
